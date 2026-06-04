@@ -47,16 +47,22 @@ def main():
     emo.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
 
     dce = cfg["d_cross_emo"]
+    forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))
     rng = random.Random(args.seed)
 
     rows = []
     cnt_no_emo = cnt_same_top1 = cnt_ref_neu = cnt_tgt_neu = 0
-    cnt_ref_top1_neu = cnt_tgt_top1_neu = 0
+    cnt_ref_top1_neu = cnt_tgt_top1_neu = cnt_forbidden_emo = 0
     for v in iter_jsonl(vc_path):
         e_orig = emo.emotion_summary(v["original_audio"])
         e_ref  = emo.emotion_summary(v["ref_audio"])
         if e_orig["top1_label"] is None or e_ref["top1_label"] is None:
             cnt_no_emo += 1; continue
+        if forbidden_emo_labels and (
+            e_orig["top1_label"] in forbidden_emo_labels
+            or e_ref["top1_label"] in forbidden_emo_labels
+        ):
+            cnt_forbidden_emo += 1; continue
         if dce.get("ref_top1_not_neutral", False) and e_ref["top1_label"] == "neutral":
             cnt_ref_top1_neu += 1; continue
         if dce.get("tgt_top1_not_neutral", False) and e_orig["top1_label"] == "neutral":
@@ -102,7 +108,8 @@ def main():
     pair_dist = Counter((r["ref_emotion"]["top1_label"], r["tgt_emotion"]["top1_label"]) for r in rows)
     print(f"[07f] D_cross_emo={len(rows)}  (无emo {cnt_no_emo}, ref-top1=neu {cnt_ref_top1_neu}, "
           f"tgt-top1=neu {cnt_tgt_top1_neu}, top1 相同 {cnt_same_top1}, ref P_neu>{dce['ref_neutral_max']} {cnt_ref_neu}, "
-          f"tgt P_neu>{dce['tgt_neutral_max']} {cnt_tgt_neu})  → {out}")
+          f"tgt P_neu>{dce['tgt_neutral_max']} {cnt_tgt_neu}, "
+          f"forbidden emo {cnt_forbidden_emo})  → {out}")
     print(f"\n  (ref_top1 → tgt_top1) 分布 top 10:")
     for k, c in pair_dist.most_common(10):
         print(f"    {k[0]} → {k[1]}: {c}")

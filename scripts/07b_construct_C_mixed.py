@@ -47,11 +47,13 @@ def main():
     p_edited_min = bc["edited_neutral_min"]
     p_ref_max = bc.get("ref_neutral_max", 1.0)
     sv_must = bc["edited_sv_must_be_neutral"]
+    forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))
     rng = random.Random(args.seed)
 
     rows = []
     dropped_orig_too_neutral = 0
     dropped_orig_top1_neu = 0
+    dropped_forbidden_emo = 0
     skip_no_emotion = 0
     require_top1_nonneu = cm.get("original_top1_not_neutral", False)
     for r in iter_jsonl(jo_path):
@@ -59,6 +61,12 @@ def main():
             continue
         e_edited = emo.emotion_summary(r["edited_audio"])
         e_orig = emo.emotion_summary(r["original_audio"])
+        if forbidden_emo_labels and (
+            e_edited["top1_label"] in forbidden_emo_labels
+            or e_orig["top1_label"] in forbidden_emo_labels
+        ):
+            dropped_forbidden_emo += 1
+            continue
         if e_edited["P_neutral"] is None or e_edited["P_neutral"] < p_edited_min:
             continue
         if bc.get("edited_top1_must_be_neutral", False) and e_edited["top1_label"] != "neutral":
@@ -98,7 +106,8 @@ def main():
     out = pair_path(cfg, args.split, "C_mixed.jsonl")
     write_jsonl(out, rows)
     print(f"[07b] C_mixed={len(rows)}  (orig top1=neu {dropped_orig_top1_neu}, "
-          f"orig 太中性 {dropped_orig_too_neutral}, 缺 emotion {skip_no_emotion})  → {out}")
+          f"orig 太中性 {dropped_orig_too_neutral}, 缺 emotion {skip_no_emotion}, "
+          f"forbidden emo {dropped_forbidden_emo})  → {out}")
 
 
 if __name__ == "__main__":

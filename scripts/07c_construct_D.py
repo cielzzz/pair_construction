@@ -41,16 +41,22 @@ def main():
     emo.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
 
     d = cfg["d"]
+    forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))
     rng = random.Random(args.seed)
 
     rows = []
     cnt_no_emo = cnt_top1_mismatch = cnt_cos_low = cnt_ref_too_neu = cnt_tgt_too_neu = 0
-    cnt_ref_top1_neu = cnt_tgt_top1_neu = 0
+    cnt_ref_top1_neu = cnt_tgt_top1_neu = cnt_forbidden_emo = 0
     for v in iter_jsonl(vc_path):
         e_orig = emo.emotion_summary(v["original_audio"])
         e_ref = emo.emotion_summary(v["ref_audio"])
         if e_orig["top1_label"] is None or e_ref["top1_label"] is None:
             cnt_no_emo += 1; continue
+        if forbidden_emo_labels and (
+            e_orig["top1_label"] in forbidden_emo_labels
+            or e_ref["top1_label"] in forbidden_emo_labels
+        ):
+            cnt_forbidden_emo += 1; continue
         if d["same_top1_label"] and e_orig["top1_label"] != e_ref["top1_label"]:
             cnt_top1_mismatch += 1; continue
         if d.get("ref_top1_not_neutral", False) and e_ref["top1_label"] == "neutral":
@@ -88,7 +94,8 @@ def main():
     out = pair_path(cfg, args.split, "D.jsonl")
     write_jsonl(out, rows)
     print(f"[07c] D={len(rows)}  (top1≠ {cnt_top1_mismatch}, ref-top1=neu {cnt_ref_top1_neu}, tgt-top1=neu {cnt_tgt_top1_neu}, "
-          f"cos< {cnt_cos_low}, ref太中性 {cnt_ref_too_neu}, tgt太中性 {cnt_tgt_too_neu}, 缺emotion {cnt_no_emo})  → {out}")
+          f"cos< {cnt_cos_low}, ref太中性 {cnt_ref_too_neu}, tgt太中性 {cnt_tgt_too_neu}, 缺emotion {cnt_no_emo}, "
+          f"forbidden emo {cnt_forbidden_emo})  → {out}")
 
 
 if __name__ == "__main__":

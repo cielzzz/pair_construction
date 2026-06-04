@@ -53,6 +53,7 @@ def main():
             "情绪和表达强度保持一致，换个语气说",
         ],
     })
+    forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))
     rng = random.Random(args.seed)
 
     # 与 B/C/H2 对齐：D_st 也只看 bc.edit_whitelist 里的 edit_tag
@@ -62,7 +63,7 @@ def main():
     cnt_no_emo = cnt_top1_mismatch = cnt_cos_low = 0
     cnt_ref_top1_neu = cnt_tgt_top1_neu = 0
     cnt_ref_too_neu = cnt_tgt_too_neu = 0
-    cnt_tag_skip = 0
+    cnt_tag_skip = cnt_forbidden_emo = 0
 
     for r in iter_jsonl(jo_path):
         if whitelist and r.get("edit_tag") not in whitelist:
@@ -71,6 +72,11 @@ def main():
         e_edited = emo.emotion_summary(r["edited_audio"])
         if e_ref["top1_label"] is None or e_edited["top1_label"] is None:
             cnt_no_emo += 1; continue
+        if forbidden_emo_labels and (
+            e_ref["top1_label"] in forbidden_emo_labels
+            or e_edited["top1_label"] in forbidden_emo_labels
+        ):
+            cnt_forbidden_emo += 1; continue
         if dst["same_top1_label"] and e_ref["top1_label"] != e_edited["top1_label"]:
             cnt_top1_mismatch += 1; continue
         if dst.get("ref_top1_not_neutral", False) and e_ref["top1_label"] == "neutral":
@@ -111,7 +117,8 @@ def main():
     print(f"[07d] D_st={len(rows)}  (top1≠ {cnt_top1_mismatch}, ref-top1=neu {cnt_ref_top1_neu}, "
           f"tgt-top1=neu {cnt_tgt_top1_neu}, cos< {cnt_cos_low}, "
           f"ref太中性 {cnt_ref_too_neu}, tgt太中性 {cnt_tgt_too_neu}, "
-          f"缺emotion {cnt_no_emo}, tag-非白名单 {cnt_tag_skip})  → {out}")
+          f"缺emotion {cnt_no_emo}, tag-非白名单 {cnt_tag_skip}, "
+          f"forbidden emo {cnt_forbidden_emo})  → {out}")
 
 
 if __name__ == "__main__":

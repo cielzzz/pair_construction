@@ -105,3 +105,8 @@ editx:
   - style_news
   - style_chat
   paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all/paired_report.jsonl
+emotion_filter:
+  # 在 06/07/07b/07c/07d/07f 中，任一端 top1_label 落入此列表直接丢弃
+  # zh 上 emotion2vec 不会产 unk（中文母语模型），此项基本是 no-op
+  forbidden_top1_labels:
+  - unk

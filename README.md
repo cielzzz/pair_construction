@@ -31,7 +31,7 @@ This repo joins those two streams, attaches emotion scores, and emits 11 categor
 | **C_mixed** | original_audio (real human, expressive) | edited_audio (synthetic, neutralized) | same as B | Cross real/synth, expressive → plain |
 | **D** | ref_audio (expressive) | edited_audio (expressive) | non-neutralizing tags | Same emotion, different text |
 | **D_st** | ref_audio (expressive) | edited_audio (expressive) | same as D, same text | Same emotion, same text (EditX side-output subset) |
-| **D_cross_emo** | ref (emotion X) | edited (emotion Y) | non-neutralizing tags | Cross-emotion conversion |
+| **D_cross_emo** | ref_audio (vcdata, emotion X) | original_audio (real human, emotion Y) | n/a (vcdata only) | Cross-emotion conversion — same speaker (clone vs real) but different emotion category |
 | **Genre** | ref_audio | edited_audio (genre-converted) | zh: `[news, chat]` / en: `[news, radio]` | Genre / delivery-style conversion, same text |
 | **H1** | original_audio | ref_audio | A subset with high emotion-cosine | Zero-change control ("keep as-is") |
 | **H2** | edited_audio (neutralized) | self or neutral neighbor | neutralizer tag | Already-satisfied control ("be more neutral") |

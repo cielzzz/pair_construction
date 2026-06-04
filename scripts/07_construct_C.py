@@ -42,15 +42,23 @@ def main():
     p_edited_min = bc["edited_neutral_min"]
     p_ref_max = bc.get("ref_neutral_max", 1.0)
     sv_must = bc["edited_sv_must_be_neutral"]
+    forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))
     rng = random.Random(args.seed)
 
     rows = []
     dropped_ref_neutral = 0
+    dropped_forbidden_emo = 0
     for r in iter_jsonl(jo_path):
         if r["edit_tag"] not in whitelist:
             continue
         e_edited = emo.emotion_summary(r["edited_audio"])
         e_ref = emo.emotion_summary(r["ref_audio"])
+        if forbidden_emo_labels and (
+            e_edited["top1_label"] in forbidden_emo_labels
+            or e_ref["top1_label"] in forbidden_emo_labels
+        ):
+            dropped_forbidden_emo += 1
+            continue
         if e_edited["P_neutral"] is None or e_edited["P_neutral"] < p_edited_min:
             continue
         if bc.get("edited_top1_must_be_neutral", False) and e_edited["top1_label"] != "neutral":
@@ -86,7 +94,8 @@ def main():
 
     out = pair_path(cfg, args.split, "C.jsonl")
     write_jsonl(out, rows)
-    print(f"[07] C={len(rows)}  (ref 太中性丢弃 {dropped_ref_neutral} 条)  → {out}")
+    print(f"[07] C={len(rows)}  (ref 太中性丢弃 {dropped_ref_neutral} 条, "
+          f"forbidden emo 丢弃 {dropped_forbidden_emo} 条)  → {out}")
 
 
 if __name__ == "__main__":

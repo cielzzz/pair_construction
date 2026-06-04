@@ -31,7 +31,7 @@
 | **C_mixed** | original_audio（真人，有表现力） | edited_audio（合成，中性化） | 同 B | 跨真人/合成，高表现 → 平淡 |
 | **D** | ref_audio（有表现力） | edited_audio（有表现力） | 非中性化 tag | 同情绪，不同文本 |
 | **D_st** | ref_audio（有表现力） | edited_audio（有表现力） | 同 D，同文本 | 同情绪、同文本（EditX 旁路子集） |
-| **D_cross_emo** | ref（情绪 X） | edited（情绪 Y） | 非中性化 tag | 跨情绪转换 |
+| **D_cross_emo** | ref_audio（vcdata，情绪 X） | original_audio（真人，情绪 Y） | 不用 editx（仅 vcdata） | 跨情绪转换 —— 同 speaker（clone vs 真人）、跨情绪类别 |
 | **Genre** | ref_audio | edited_audio（风格转换） | zh: `[news, chat]` / en: `[news, radio]` | 风格 / 播报方式转换，同文本 |
 | **H1** | original_audio | ref_audio | A 的 emotion cosine 极高子集 | 零变化对照（"保持原样"） |
 | **H2** | edited_audio（已中性化） | 自身或中性近邻 | 中性化 tag | 已满足指令对照（"再中性一点"） |

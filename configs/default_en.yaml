@@ -8,6 +8,11 @@ editx:
   - style_news
   - style_radio
   paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all/paired_report.jsonl
+emotion_filter:
+  # en 必带：emotion2vec 是中文母语模型，在英文上 18-43% 样本归为 unk
+  # 06/07/07b/07c/07d/07f 中任一端 top1_label 落入此列表直接丢弃
+  forbidden_top1_labels:
+  - unk
 a:
   sim_min: 0.0
   require_flag_ok: false
