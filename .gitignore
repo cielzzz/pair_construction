@@ -41,3 +41,6 @@ __pycache__/
 
 # 文档（仅本地，不入 repo）
 docs/
+
+# Streamlit app 索引产物（per host 重建）
+app/data/*.parquet

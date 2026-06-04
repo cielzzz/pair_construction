@@ -249,7 +249,58 @@ pair_construction/
 
 ---
 
-## 9. 本项目不做什么
+## 9. Web 看板（Streamlit）
+
+`app/` 下有一个 3 页 Streamlit 应用，浏览 pair 数据、监控增长、对比数据源。
+
+```
+app/
+├── app.py                       # 入口
+├── index_builder.py             # 扫 outputs/<split>/pairs/*.jsonl → index.parquet
+├── raw_scanner.py               # 扫上游 raw split_*.jsonl → raw_source.parquet + duration_cache.parquet
+├── loader.py                    # 共享缓存加载器
+├── start.sh                     # 启动脚本（用 kxhuang tts env）
+└── pages/
+    ├── 1_📊_Dashboard.py        # KPI 卡片 / source-lang-type 分布 / 留存率
+    ├── 2_🔍_Browser.py          # 多维过滤 / 单 pair 详情 + 音频对比
+    └── 3_📈_Source_compare.py   # 多数据源横向对比（每加一个新源就有一列）
+```
+
+### 建索引 + 启动（在 GPU 服务器上）
+
+```bash
+# 1) 先把 pair 侧聚合
+python app/index_builder.py
+
+# 2) 再扫上游 raw（得到"总小时数" + duration 缓存）
+python app/raw_scanner.py \
+  --add instruction_0.1_enzh:zh:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/zh \
+  --add instruction_0.1_enzh:en:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/en
+
+# 3) 再跑一次 index_builder，让 pair 索引拿到 duration → 算出 per-split 小时数
+python app/index_builder.py
+
+# 4) 启动
+bash app/start.sh        # 默认端口 8501
+```
+
+### 本机浏览器访问（SSH 端口转发）
+
+```bash
+# 本机另开 terminal
+ssh -L 8501:localhost:8501 <gpu_host>
+# 浏览器打开 http://localhost:8501
+```
+
+### Browser 页支持的交叉过滤维度
+
+source / language / split / pair_type / is_filtered / source_edit_tag /
+ref_emotion.top1 / tgt_emotion.top1 / sim_wavlm 范围 / ref_dnsmos_bak 范围 /
+tgt_dnsmos_bak 范围 / instruction 关键词 / ref+tgt 文本关键词。
+
+---
+
+## 10. 本项目不做什么
 
 - 不重训任何模型（MOSS-TTS、EditX、emotion2vec、SenseVoice、WavLM-L）
 - 不重新生成任何上游音频

@@ -249,7 +249,58 @@ pair_construction/
 
 ---
 
-## 9. What this project does NOT do
+## 9. Web dashboard (Streamlit)
+
+A 3-page Streamlit app under `app/` browses pair data, monitors growth, and compares data sources.
+
+```
+app/
+├── app.py                       # entry point
+├── index_builder.py             # scans outputs/<split>/pairs/*.jsonl → index.parquet
+├── raw_scanner.py               # scans upstream raw split_*.jsonl → raw_source.parquet + duration_cache.parquet
+├── loader.py                    # cached loaders shared by all pages
+├── start.sh                     # convenience launcher (uses kxhuang tts env)
+└── pages/
+    ├── 1_📊_Dashboard.py        # KPI cards, source/lang/type distributions, retention rate
+    ├── 2_🔍_Browser.py          # multi-dim filtering, per-pair detail with audio playback
+    └── 3_📈_Source_compare.py   # cross-source comparison (each new data source = a new column)
+```
+
+### Build indices and launch (on the GPU host)
+
+```bash
+# 1) Pre-aggregate pair-side data
+python app/index_builder.py
+
+# 2) Pre-aggregate upstream raw data (gives "total hours" + duration cache)
+python app/raw_scanner.py \
+  --add instruction_0.1_enzh:zh:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/zh \
+  --add instruction_0.1_enzh:en:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/en
+
+# 3) Re-run index_builder so it can join duration_cache → per-split pair hours
+python app/index_builder.py
+
+# 4) Launch
+bash app/start.sh        # default port 8501
+```
+
+### Local browser access (SSH tunnel)
+
+```bash
+# From your laptop
+ssh -L 8501:localhost:8501 <gpu_host>
+# Then open http://localhost:8501
+```
+
+### Cross-filterable tags (Browser page)
+
+source, language, split, pair_type, is_filtered, source_edit_tag,
+ref_emotion.top1, tgt_emotion.top1, sim_wavlm range, ref_dnsmos_bak range,
+tgt_dnsmos_bak range, instruction keyword, ref/tgt text keyword.
+
+---
+
+## 10. What this project does NOT do
 
 - Does not retrain any model (MOSS-TTS, EditX, emotion2vec, SenseVoice, WavLM-L)
 - Does not regenerate any upstream audio
