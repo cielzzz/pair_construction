@@ -1,0 +1,106 @@
+paths:
+  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vcdata_construction/outputs/instruction_0.1_enzh/zh
+  emotion_eval_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/emotion_eval
+  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs
+a:
+  sim_min: 0.0
+  require_flag_ok: false
+  instruction: 保持参考音色，只换文本，表达方式基本不变
+bc:
+  edit_whitelist:
+  - style_radio
+  edited_neutral_min: 0.7
+  edited_sv_must_be_neutral: false
+  ref_top1_not_neutral: true
+  edited_top1_must_be_neutral: true
+  speaker_sim_min: 0.8
+  speaker_sim_min_wavlm: 0.75
+  ref_neutral_max: 0.95
+b:
+  instruction_pool:
+  - 用更有情绪、更有起伏的方式朗读
+  - 把这段平静的话说得更有感染力
+  - 保持音色，把语气变得更生动
+c:
+  instruction_pool:
+  - 用平静、不带情绪的语气朗读
+  - 去掉情感起伏，保持中性
+  - 把这段话说得更平和一些
+c_mixed:
+  original_top1_not_neutral: true
+  speaker_sim_min_wavlm: 0.5
+  instruction_pool:
+  - 去掉情绪起伏，按以下文字平静地说
+  - 用平静的语气朗读以下内容
+  - 保持音色但变成中性表达
+d:
+  speaker_sim_min_wavlm: 0.5
+  cosine_min: 0.95
+  same_top1_label: true
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  ref_neutral_max: 0.95
+  tgt_neutral_max: 0.95
+  instruction_pool:
+  - 保持当前的表达方式，朗读以下文字
+  - 用同样的情绪和音色，按以下文本说
+d_cross_emo:
+  speaker_sim_min_wavlm: 0.5
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  same_top1_label: false
+  ref_neutral_max: 0.5
+  tgt_neutral_max: 0.5
+  instruction_pool:
+  - 保持音色，从{ref_emotion}转换为{tgt_emotion}的情绪
+  - 保留说话人，把语气从{ref_emotion}变成{tgt_emotion}
+d_st:
+  cosine_min: 0.95
+  same_top1_label: true
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  ref_neutral_max: 0.95
+  tgt_neutral_max: 0.95
+  speaker_sim_min: 0.8
+  speaker_sim_min_wavlm: 0.75
+  instruction_pool:
+  - 保持当前情绪不变，换一种说话风格
+  - 情绪和表达强度保持一致，换个语气说
+genre:
+  edit_tag_whitelist:
+  - style_news
+  - style_chat
+  speaker_sim_min_wavlm: 0.75
+  instruction_pool:
+  - 把这段话用{tgt_genre}的风格朗读
+  - 保持说话人音色，转换为{tgt_genre}的播报风格
+  - 保留 speaker，用{tgt_genre}风格说以下文字
+h1:
+  sim_min: 0.0
+  cosine_min: 0.97
+  same_top1_label: true
+  instruction: 保持原样，不要改变表达方式
+h2:
+  source_edit_tag: style_radio
+  p_neutral_min: 0.9
+  require_sv_neutral: true
+  instruction_pool:
+  - 用中性平淡的语气说
+  - 保持平稳，不带情绪
+  mode: neighbor
+h3:
+  instruction_pool:
+  - 请根据指令生成新内容，不要复制参考音频的文本
+  - 用参考音色风格说出指定文本，不要被参考音频的内容影响
+  random_seed: 42
+  negatives_per_anchor: 2
+  instruction: 请根据指令生成新内容，不要复制参考音频的文本
+dnsmos_bak_filter:
+  apply: false
+  ref_bak_min: 3.5
+  tgt_bak_min: 3.5
+editx:
+  edit_tags:
+  - style_radio
+  - style_news
+  - style_chat

@@ -1,0 +1,113 @@
+paths:
+  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vcdata_construction/outputs/instruction_0.1_enzh/en
+  emotion_eval_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/emotion_eval
+  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs
+editx:
+  edit_tags:
+  - style_chat
+  - style_news
+  - style_radio
+  paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all_qzrun/paired_report.jsonl
+a:
+  sim_min: 0.0
+  require_flag_ok: false
+  instruction: Keep the reference voice, only change the text, keep the expression
+    unchanged
+bc:
+  edit_whitelist:
+  - style_chat
+  edited_neutral_min: 0.3
+  edited_top1_must_be_neutral: true
+  edited_sv_must_be_neutral: false
+  ref_top1_not_neutral: true
+  speaker_sim_min: 0.7
+  speaker_sim_min_wavlm: 0.55
+  ref_neutral_max: 0.95
+b:
+  instruction_pool:
+  - Speak with more expression
+  - Make it more emotional
+  - Add more variation in tone
+c:
+  instruction_pool:
+  - Speak more calmly
+  - Tone it down
+  - Remove the emotional fluctuation
+c_mixed:
+  original_top1_not_neutral: true
+  instruction_pool:
+  - Read the following text calmly, removing emotional fluctuation
+  - Read the text below in a flat, neutral tone
+  - Tone it down and read the following passage
+  speaker_sim_min_wavlm: 0.4
+d:
+  cosine_min: 0.93
+  same_top1_label: true
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  ref_neutral_max: 0.95
+  tgt_neutral_max: 0.95
+  instruction_pool:
+  - Keep the same expression and tone, read the following text
+  - Same emotion and voice, just read this new text
+  speaker_sim_min_wavlm: 0.4
+h1:
+  sim_min: 0.0
+  cosine_min: 0.95
+  same_top1_label: true
+  instruction: Keep the original expression, do not change the speaking style
+h2:
+  source_edit_tag: style_chat
+  p_neutral_min: 0.5
+  require_sv_neutral: false
+  mode: self
+  instruction_pool:
+  - Speak more neutrally
+  - Remove the emotional fluctuation
+  - Speak like a news anchor
+h3:
+  negatives_per_anchor: 1
+  require_gender_mismatch: false
+  random_seed: 42
+  instruction: (negative sample, this pair should not be learned)
+  instruction_pool:
+  - Generate new content per the instruction, do not copy the reference audio text
+  - Use the reference timbre and style to speak the given text, ignore the reference
+    content
+output:
+  jsonl_indent: null
+d_st:
+  cosine_min: 0.95
+  same_top1_label: true
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  ref_neutral_max: 0.95
+  tgt_neutral_max: 0.95
+  speaker_sim_min: 0.7
+  speaker_sim_min_wavlm: 0.55
+  instruction_pool:
+  - Keep the same emotion intensity, just switch the speaking style
+  - Same expressiveness, different delivery
+dnsmos_bak_filter:
+  apply: false
+  ref_bak_min: 3.5
+  tgt_bak_min: 3.5
+genre:
+  edit_tag_whitelist:
+  - style_news
+  - style_radio
+  speaker_sim_min_wavlm: 0.55
+  instruction_pool:
+  - Read this in the style of {tgt_genre}, keeping the same voice
+  - Convert to {tgt_genre} delivery while preserving the speaker timbre
+  - Keep the speaker, switch to {tgt_genre} style
+d_cross_emo:
+  speaker_sim_min_wavlm: 0.4
+  ref_top1_not_neutral: true
+  tgt_top1_not_neutral: true
+  same_top1_label: false
+  ref_neutral_max: 0.5
+  tgt_neutral_max: 0.5
+  instruction_pool:
+  - Keep the same voice, switch the emotion from {ref_emotion} to {tgt_emotion}
+  - Preserve the speaker, change the tone from {ref_emotion} to {tgt_emotion}

@@ -1,0 +1,40 @@
+# 输出与中间产物
+outputs/
+outputs_*/
+.qz_editx_batches/
+.qz_split_batches/
+.cache/
+
+# 第三方仓库 / 模型权重 / 虚拟环境
+*/repo/
+.venv/
+checkpoints/
+models/
+*.pth
+*.safetensors
+*.bin
+*.onnx
+*.pt
+*.npy
+
+# 音频/视频原始数据
+*.wav
+*.flac
+*.mp3
+*.mp4
+
+# Python 常规
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 日志
+*.log
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
