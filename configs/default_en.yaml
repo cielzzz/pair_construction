@@ -7,7 +7,7 @@ editx:
   - style_chat
   - style_news
   - style_radio
-  paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all_qzrun/paired_report.jsonl
+  paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all/paired_report.jsonl
 a:
   sim_min: 0.0
   require_flag_ok: false

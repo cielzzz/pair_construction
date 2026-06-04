@@ -43,7 +43,7 @@ def normalize(row: dict, split: str, edit_tag: str) -> dict:
 
 def iter_one_tag(cfg: dict, split: str, edit_tag: str) -> Iterator[dict]:
     sd = split_dir(cfg, split)
-    # 先尝试模板路径（要求 split_NNNN 数字格式）
+    # 先尝试模板路径（要求 split_NNNN 数字格式 + yaml 配 paired_report_template）
     pr = None
     try:
         idx = split_idx_of(split)
@@ -51,7 +51,9 @@ def iter_one_tag(cfg: dict, split: str, edit_tag: str) -> Iterator[dict]:
         cand = sd / rel
         if cand.exists():
             pr = cand
-    except ValueError:
+    except (ValueError, KeyError):
+        # ValueError: split 名非 split_NNNN（如 smoke_*） → 跳模板，走 glob
+        # KeyError: yaml 没配 paired_report_template → 跳模板，走 glob
         pass
     # fallback：glob 任何 stepaudio_<edit_tag>_<split>_*/paired_report.jsonl
     if pr is None:

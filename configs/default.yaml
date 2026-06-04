@@ -104,3 +104,4 @@ editx:
   - style_radio
   - style_news
   - style_chat
+  paired_report_template: stepaudio_{edit_tag}_split_{split_idx:04d}_all/paired_report.jsonl
