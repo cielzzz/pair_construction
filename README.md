@@ -178,6 +178,35 @@ Key knob categories:
 | `h2.mode` | `self` (any neutral edited as both sides) or `neighbor` (paired with another neutral) |
 | `dnsmos_bak_filter.apply` | toggle the optional anti-electronic-tone post-filter |
 
+### 6.1 How "neutral" is decided (P_neutral semantics)
+
+There is **no single global threshold** for "neutral". Emotion is judged in two layers:
+
+1. **Hard condition** `top1_label == "neutral"` — emotion2vec's nine-class winner is `neutral`.
+2. **Soft condition** `P_neutral` — the actual neutral-class probability (continuous, 0–1).
+
+Each pair type uses different lower / upper bounds, biased by language:
+
+| Knob | zh | en | Meaning |
+|---|---|---|---|
+| `bc.edited_neutral_min` | **0.7** | **0.3** | B/C neutral side must reach ≥ this |
+| `bc.ref_neutral_max` | 0.95 | 0.95 | B/C expressive side must stay ≤ this (else too flat) |
+| `c_mixed.ref_neutral_max` | 0.95 | 0.95 | Same as above for C_mixed |
+| `d.ref_neutral_max` / `tgt_neutral_max` | 0.95 | 0.95 | Both sides of D must be expressive (≤ 0.95) |
+| `d_st.*neutral_max` | 0.95 | 0.95 | Same for D_st |
+| **`d_cross_emo.*neutral_max`** | **0.5** | **0.5** | Cross-emotion requires both sides to be very far from neutral |
+| `h2.p_neutral_min` | **0.9** | **0.5** | H2 reference must be high-confidence neutral |
+
+**Why zh vs en differ**: emotion2vec is trained on Chinese, so on Chinese audio it yields sharp distributions (a clearly-neutralized sample easily reaches `P_neutral ≥ 0.9`). The same model on English yields flatter distributions — the strongest neutralizer (`style_chat`) tops out around `P_neutral ≈ 0.3-0.5`. English thresholds are uniformly relaxed.
+
+**Worked example** for a row with `P_neutral = 0.024`:
+- The audio is **almost certainly non-neutral** (only 2.4% of the neutral class).
+- ❌ Rejected as B/C neutral side (needs ≥ 0.7 / 0.3).
+- ✅ Accepted as B/C expressive side (allowed ≤ 0.95).
+- ✅ Accepted as D / D_cross_emo side (D needs ≤ 0.95; D_cross_emo needs ≤ 0.5).
+
+**Independent signal** `sv_label`: SenseVoice runs a separate emotion classifier. `bc.edited_sv_must_be_neutral` can force dual-model consensus, but it is currently `false` everywhere because en dual-model agreement rate is only ~10%.
+
 ---
 
 ## 7. Output schema

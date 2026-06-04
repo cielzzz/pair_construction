@@ -178,6 +178,35 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 | `h2.mode` | `self`（同一中性 edited 两端复用）或 `neighbor`（配另一中性近邻） |
 | `dnsmos_bak_filter.apply` | 是否打开可选的反电音过滤 |
 
+### 6.1 怎么判定"中性"（P_neutral 含义）
+
+**没有一个全局阈值**说"P_neutral 大于多少就是 neutral"。判定分两层：
+
+1. **硬条件** `top1_label == "neutral"` —— emotion2vec 九类里 neutral 是最大概率类
+2. **软条件** `P_neutral` —— neutral 类的具体概率值（0–1 连续）
+
+不同 pair 类用不同上下限，且语言不同阈值不同：
+
+| 阈值字段 | zh | en | 含义 |
+|---|---|---|---|
+| `bc.edited_neutral_min` | **0.7** | **0.3** | B/C 中性侧（edited_audio）**下限**：≥ 此值才算够中性 |
+| `bc.ref_neutral_max` | 0.95 | 0.95 | B/C 高表现侧（ref_audio）**上限**：≤ 此值才算真有表现力（否则太中性） |
+| `c_mixed.ref_neutral_max` | 0.95 | 0.95 | C_mixed 同上 |
+| `d.ref_neutral_max` / `tgt_neutral_max` | 0.95 | 0.95 | D 双侧都要有表现力（≤ 0.95） |
+| `d_st.*neutral_max` | 0.95 | 0.95 | D_st 同 D |
+| **`d_cross_emo.*neutral_max`** | **0.5** | **0.5** | 跨情绪要求**双侧极端非中性** |
+| `h2.p_neutral_min` | **0.9** | **0.5** | H2 reference 必须**高置信中性** |
+
+**为什么 zh/en 阈值不同**：emotion2vec 是中文母语模型。中文音频上分布锐利（一条中性化样本能轻松到 `P_neutral ≥ 0.9`），同样模型用到英文上分布扁平，最强中性化 tag（`style_chat`）也只能到 `P_neutral ≈ 0.3-0.5`。英文阈值整体**放宽**才能拿到样本。
+
+**例子**：一条 `P_neutral = 0.024` 的音频：
+- 模型几乎肯定它**不是中性**（只有 2.4% 是 neutral 类）
+- ❌ 不能进 B/C 中性侧（需要 ≥ 0.7 / 0.3）
+- ✅ 可以进 B/C 高表现侧（允许 ≤ 0.95）
+- ✅ 可以进 D / D_cross_emo 双侧（D 需 ≤ 0.95；D_cross_emo 需 ≤ 0.5）
+
+**独立信号 `sv_label`**：SenseVoice 是另一个独立情绪分类器。`bc.edited_sv_must_be_neutral` 可以强制两个模型共识，但目前全设为 false —— en 上两模型一致率只 ~10%，强同意会卡掉绝大多数样本。
+
 ---
 
 ## 7. 输出 schema
