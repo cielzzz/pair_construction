@@ -35,4 +35,7 @@ exec "$STREAMLIT" run "$PROJ_ROOT/app/app.py" \
     --server.port "$PORT" \
     --server.headless true \
     --server.address 0.0.0.0 \
+    --server.enableCORS false \
+    --server.enableXsrfProtection false \
+    --server.enableWebsocketCompression false \
     --browser.gatherUsageStats false

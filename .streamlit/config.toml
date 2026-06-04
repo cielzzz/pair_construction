@@ -1,0 +1,30 @@
+# Streamlit 主题：暗色 + 青蓝 accent
+# 改完需要重启 streamlit 才生效
+
+[theme]
+base = "dark"
+
+# 强调色（按钮、选中态、滑块）—— 青绿，区别于默认的 streamlit 红
+primaryColor = "#00d4ff"
+
+# 主背景 —— 比默认 dark 更暗
+backgroundColor = "#0a0e1a"
+
+# 卡片 / 侧栏背景
+secondaryBackgroundColor = "#141a2b"
+
+# 字体色
+textColor = "#e2e8f0"
+
+# 字体
+font = "monospace"
+
+[server]
+# 反代友好
+enableCORS = false
+enableXsrfProtection = false
+enableWebsocketCompression = false
+headless = true
+
+[browser]
+gatherUsageStats = false
