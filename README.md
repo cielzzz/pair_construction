@@ -1,141 +1,259 @@
+[English](README.md) | [简体中文](README_zh.md)
+
 # pair_construction
 
-一个**只读上游、自产 pair**的流水线，给 TTS 大模型的"指令生成"场景产训练对（参考音频 + instruction → 新音频）。
+> A **read-only upstream, produce pairs** pipeline that turns voice-cloning + voice-editing outputs into 11 categories of `(reference_audio, instruction, target_audio)` training pairs for instruction-conditioned TTS.
 
-上游：
-- `vcdata_construction/` — MOSS-TTS 克隆音色合成 ref_audio（不动）
-- `vc_edit/` + 各 split 下 `stepaudio_<edit_tag>_split_XXXX_all_qzrun/` — StepFun EditX 编辑 ref_audio（不动）
+This project does **not** train models, does **not** generate any new audio, and does **not** modify upstream artifacts. It only reads, normalizes, joins, filters and emits jsonl.
 
-下游产物：
+---
+
+## 1. Purpose
+
+Instruction-conditioned TTS (e.g. "speak more calmly", "convert to news-broadcast style", "keep the same emotion but read this new text") needs paired training data where the same speaker timbre appears in two takes that differ along a controlled axis.
+
+Upstream provides two such axes for free:
+
+- **`vcdata_construction/`** — MOSS-TTS clones a reference speaker into many alternative renderings (different text, same voice).
+- **`vc_edit/`** — StepFun EditX applies style / emotion edits to a reference audio (same voice, different delivery).
+
+This repo joins those two streams, attaches emotion scores, and emits 11 categories of pairs covering: neutralization, re-energization, style conversion, cross-emotion conversion, identity controls, and cross-speaker negatives — all conditioned on natural-language instructions.
+
+---
+
+## 2. Pair categories (11 types)
+
+| Type | reference | target | edit source | Purpose |
+|---|---|---|---|---|
+| **A** | original_audio | ref_audio (same voice, new text) | vcdata only | Voice-clone baseline; only text varies |
+| **B** | edited_audio (neutralized) | ref_audio (expressive) | `style_radio` (zh) / `style_chat` (en) | Plain → expressive |
+| **C** | ref_audio (expressive) | edited_audio (neutralized) | same as B | Expressive → plain |
+| **C_mixed** | original_audio (real human, expressive) | edited_audio (synthetic, neutralized) | same as B | Cross real/synth, expressive → plain |
+| **D** | ref_audio (expressive) | edited_audio (expressive) | non-neutralizing tags | Same emotion, different text |
+| **D_st** | ref_audio (expressive) | edited_audio (expressive) | same as D, same text | Same emotion, same text (EditX side-output subset) |
+| **D_cross_emo** | ref (emotion X) | edited (emotion Y) | non-neutralizing tags | Cross-emotion conversion |
+| **Genre** | ref_audio | edited_audio (genre-converted) | zh: `[news, chat]` / en: `[news, radio]` | Genre / delivery-style conversion, same text |
+| **H1** | original_audio | ref_audio | A subset with high emotion-cosine | Zero-change control ("keep as-is") |
+| **H2** | edited_audio (neutralized) | self or neutral neighbor | neutralizer tag | Already-satisfied control ("be more neutral") |
+| **H3** | any A reference | random cross-row reference | A with cross-row shuffle | Cross-speaker negative |
+
+The **neutralizing edit tag differs by language**: `style_radio` is the strongest neutralizer for Chinese; `style_chat` is the strongest for English. Genre's whitelist is the complement set, so B/C/H2 (which need a neutralizer) and Genre (which should not start from already-neutral) never share a tag.
+
+---
+
+## 3. Pipeline
+
 ```
-outputs/<split>/pairs/
-├── A.jsonl          只换文本，表达基本不变（vcdata 全量）
-├── B_clean.jsonl    平淡 reference → 高表现 target
-├── C_clean.jsonl    高表现 reference → 中性/平淡 target
-├── H1.jsonl         零变化对照（表达几乎不变的精筛子集）
-├── H2.jsonl         已满足指令对照（已中性，再叫"更中性"）
-└── H3.jsonl         跨 speaker 负样本
+                    upstream (read-only)
+   ┌──────────────────────────┐    ┌─────────────────────┐
+   │  vcdata_construction     │    │  vc_edit (StepFun)  │
+   │  MOSS-TTS clones         │    │  EditX style/emo    │
+   │  ref_audio per row       │    │  edits ref_audio    │
+   └────────────┬─────────────┘    └──────────┬──────────┘
+                │                              │
+                ▼                              ▼
+       01 build_vcdata_base           02 build_editx_base
+                │                              │
+                └──────────┬───────────────────┘
+                           │
+                03 join_editx_with_vcdata
+                           │
+                           ▼
+                  joined_editx.jsonl
+                           │
+                04 run_emotion_eval (emotion2vec + SenseVoice + DNSMOS)
+                           │
+                           ▼
+         emotion/per_file_dual.csv + per_pair.csv
+                           │
+   ┌────────┬────────┬─────┴────┬─────────┬─────────┬────────┐
+   ▼        ▼        ▼          ▼         ▼         ▼        ▼
+  05 A   06 B   07 C / 07b C_mixed   07c D / 07d D_st / 07f D_cross_emo
+  08 H1     09 H2     10 H3     07e Genre
+                           │
+                           ▼
+            11b add_wavlm_sim   (WavLM-L + ECAPA-TDNN re-score, emits *_filtered.jsonl)
+                           │
+                           ▼
+            12 filter_dnsmos_bak (anti-electronic-tone, optional apply)
+                           │
+                           ▼
+                  outputs/<split>/pairs/*.jsonl
 ```
 
 ---
 
-## 1. 口径定义（**项目唯一权威**）
+## 4. Environments
 
-| 编号 | 类型 | reference | target | instruction 示例 | 数据源 |
-|---|---|---|---|---|---|
-| **A** | 只换文本，表达基本不变 | 真实 original_audio | vcdata ref_audio (同音色不同文本) | "保持参考音色，只换文本"（后标注，可选） | vcdata 全量 |
-| **B-clean** | 平淡 → 高表现 | edited_audio (中性化) | ref_audio (高表现) | "说得更有感染力 / 更有起伏 / 更像旁白" | joined_editx |
-| **C-clean** | 高表现 → 平淡 | ref_audio (高表现) | edited_audio (中性化) | "平静一点 / 不要这么夸张 / 去掉情绪起伏" | joined_editx |
-| **H1** | 零变化对照 | original_audio | ref_audio | "保持原样 / 不要改变表达方式" | A 中 cos≥0.97 子集 |
-| **H2** | 已满足指令对照 | 已中性 edited_audio | 同 / 同属性近邻 | "更中性 / 去掉情绪起伏" | joined_editx 高置信中性 |
-| **H3** | 跨 speaker 负样本 | A 中任一 ref | 跨行 random ref | "（负样本，不应学习）" | A 跨行配对 |
+Four conda envs are used (paths in chain scripts and `04_run_emotion_eval.sh`):
 
-**关键澄清：**
-- A 等同于 vcdata 全量；不再拆 A0/A 两层。
-- vcdata 阶段 16 候选 argmax 选出的 ref_audio **不一定都是高表现**——所以 B/C 类用 `ref_neutral_max` 过滤掉本身就平淡的 ref。
-- H1 是 A 的子集（emotion cosine 极高），不另起一类零碎子标签。
-- H2 当前只覆盖 neutral 方向（editx 只验过中性化），未来扩 happy/angry 时再加。
+| Env | Used by | Why separate |
+|---|---|---|
+| `moss-tts` | vcdata `stage1_generate.py` | MOSS-TTS dependencies (PyTorch + custom audio decoder) |
+| `step_audio_editx` | `run_step_editx.py` (vLLM) | StepFun EditX dependencies (vLLM, custom kernels) |
+| `emotion` | `01–10`, `04` main, `12` | pair_construction core + emotion2vec + SenseVoice |
+| `moss_ttsd_sglang` | `11b_add_wavlm_sim.py`, DNSMOS | WavLM-L, ECAPA-TDNN, ONNX runtime |
+
+You only need the upstream envs (`moss-tts`, `step_audio_editx`) if you are also running vcdata / EditX. If you start `from_vcdata`, only `emotion` + `moss_ttsd_sglang` are required.
 
 ---
 
-## 2. 数据流
+## 5. Quickstart
 
-```
-vcdata_construction/.../split_XXXX/                 vc_edit (stepfun-editx)
-  ├── manifest_shard{0..15}.jsonl   ┐                │
-  └── merged.stepaudio_input.all.jsonl ─► 01 build_vcdata_base.py
-                                          │            │
-                                          ▼            ▼
-                                  vcdata_base.jsonl   stepaudio_style_radio_split_XXXX_all_qzrun/paired_report.jsonl
-                                          │            │
-                                          │   02 build_editx_base.py
-                                          │            │
-                                          │            ▼
-                                          │   editx_base.jsonl
-                                          │            │
-                                          └──► 03 join_editx_with_vcdata.py
-                                                       │
-                                                       ▼
-                                              joined_editx.jsonl
-                                                       │
-                              04 run_emotion_eval.sh (调 emotion_eval；对 original/ref/edited 全跑)
-                                                       │
-                                                       ▼
-                                              emotion/per_file_dual.csv  + per_pair.csv
-                                                       │
-        ┌────────────────────────┬──────────────────────┼─────────────────────┬─────────────┬─────────────┐
-        ▼                        ▼                      ▼                     ▼             ▼             ▼
-05 construct_A.py     06 B_clean.py            07 C_clean.py          08 H1.py        09 H2.py     10 H3.py
-        │                        │                      │                     │             │             │
-        ▼                        ▼                      ▼                     ▼             ▼             ▼
-   A.jsonl                B_clean.jsonl          C_clean.jsonl          H1.jsonl       H2.jsonl      H3.jsonl
-```
+### 5.1 Smoke test (single GPU, single split)
 
----
-
-## 3. 一键执行
+End-to-end on 200 sentences locally:
 
 ```bash
-bash run_all.sh split_0000             # 全跑 (含 emotion eval)
-bash run_all.sh split_0000 --reuse-qzrun  # 复用 split_0000 已有 emotion 结果
-bash run_all.sh split_0000 --skip-emotion # 假设 per_file_dual.csv 已就位
+SPLIT=smoke_zh200_0603
+PC_ROOT=/path/to/pair_construction
+EMOPY=/path/to/envs/emotion/bin/python
+WAVLMPY=/path/to/envs/moss_ttsd_sglang/bin/python
+
+cd $PC_ROOT
+$EMOPY scripts/01_build_vcdata_base.py --split $SPLIT
+$EMOPY scripts/02_build_editx_base.py --split $SPLIT
+$EMOPY scripts/03_join_editx_with_vcdata.py --split $SPLIT
+bash   scripts/04_run_emotion_eval.sh $SPLIT cuda:0
+for s in 05_construct_A 06_construct_B 07_construct_C 07b_construct_C_mixed \
+         07c_construct_D 07d_construct_D_st 07e_construct_genre 07f_construct_D_cross_emo \
+         08_construct_H1 09_construct_H2 10_construct_H3; do
+    $EMOPY scripts/${s}.py --split $SPLIT
+done
+$WAVLMPY scripts/11b_add_wavlm_sim.py --split $SPLIT
+$EMOPY  scripts/12_filter_dnsmos_bak.py --split $SPLIT
 ```
 
-或分步：
+For English, switch `--config configs/default_en.yaml` (or `export PAIR_CONFIG=configs/default_en.yaml`).
+
+### 5.2 Full data (distributed via OpenI batch + local sweep)
+
 ```bash
-SPLIT=split_0000
-python scripts/01_build_vcdata_base.py --split $SPLIT
-python scripts/02_build_editx_base.py  --split $SPLIT
-python scripts/03_join_editx_with_vcdata.py --split $SPLIT
-bash   scripts/04_run_emotion_eval.sh $SPLIT
-python scripts/05_construct_A.py        --split $SPLIT
-python scripts/06_construct_B_clean.py  --split $SPLIT
-python scripts/07_construct_C_clean.py  --split $SPLIT
-python scripts/08_construct_H1.py       --split $SPLIT
-python scripts/09_construct_H2.py       --split $SPLIT
-python scripts/10_construct_H3.py       --split $SPLIT
+# 1) Submit MOSS-TTS stage1 to OpenI batch cluster
+sh runs/run_zh_full.sh                  # writes to vcdata_construction/outputs/.../zh/split_*
+# (wait for batch to finish, monitored on OpenI)
+
+# 2) Submit EditX stage to OpenI
+sh runs/run_zh_from_vcdata.sh            # default RUN_MODE=submit
+# (wait for batch)
+
+# 3) Locally walk all splits and run emotion + pair construction
+RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 ```
+
+For English, replace `zh` with `en`.
+
+### 5.3 Verified smoke results
+
+Last verified end-to-end run on 200 sentences:
+
+| Lang | A | B | C | C_mixed | D | D_st | D_cross_emo | Genre | H1 | H2 | H3 | Total |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| zh | 200 | 43 | 43 | 81 | 41 | 26 | 19 | 400 | 85 | 138 | 400 | 1476 |
+| en | 200 | 45 | 45 | 74 | 25 | 34 | 51 | 400 | 40 | 115 | 200 | 1429 |
+
+Numbers above are pre-`_filtered`. WavLM-L speaker-sim filtered counts: see `outputs/<split>/pairs/*_filtered.jsonl`.
 
 ---
 
-## 4. 输出 schema（所有 pair jsonl 通用）
+## 6. Configuration
+
+Two yaml configs, identical structure, language-specific thresholds:
+
+- `configs/default.yaml` — Chinese (default)
+- `configs/default_en.yaml` — English (looser thresholds because English emotion distributions are flatter on the eval models)
+
+Select via `export PAIR_CONFIG=configs/default_en.yaml` or `--config configs/default_en.yaml`.
+
+Key knob categories:
+
+| Group | Effect |
+|---|---|
+| `paths.*` | upstream `vcdata_root`, `emotion_eval_root`, downstream `outputs_root` |
+| `editx.edit_tags` | which EditX tags to consume (default: 3 tags per language) |
+| `bc.edit_whitelist` | which tag's edited audio is the "neutral" side of B/C |
+| `genre.edit_tag_whitelist` | which tags drive Genre (must exclude neutralizer tag) |
+| `bc / d / d_st / c_mixed / d_cross_emo / genre.speaker_sim_min_wavlm` | per-type WavLM-L speaker-similarity floor |
+| `h1.cosine_min` | "expression unchanged" threshold for the H1 control |
+| `h2.mode` | `self` (any neutral edited as both sides) or `neighbor` (paired with another neutral) |
+| `dnsmos_bak_filter.apply` | toggle the optional anti-electronic-tone post-filter |
+
+---
+
+## 7. Output schema
+
+Every pair jsonl line:
 
 ```json
 {
-  "pair_id": "split_0000:A:000123",
-  "pair_type": "A | B-clean | C-clean | H1 | H2 | H3",
-  "reference_audio": "...",
+  "pair_id": "split_0000:B:000123",
+  "pair_type": "B | C | C-mixed | D | D-st | D_cross_emo | Genre | H1 | H2 | H3 | A",
+  "reference_audio": "/path/to/ref.wav",
   "reference_text": "...",
-  "target_audio": "...",
+  "target_audio": "/path/to/tgt.wav",
   "target_text": "...",
-  "instruction": "...",
-  "source_edit": "style_radio | null",
-  "speaker_similarity": 0.91,
-  "ref_emotion": {"top1_label": "...", "top1_prob": 0.7, "P_neutral": 0.05, "sv_label": "..."},
-  "tgt_emotion": {"top1_label": "...", "top1_prob": 0.7, "P_neutral": 0.05, "sv_label": "..."},
-  "meta": {"split": "split_0000", "source_row_index": 123}
+  "instruction": "Speak with more expression",
+  "source_edit_tag": "style_radio | style_chat | style_news | null",
+  "ref_emotion": {
+    "top1_label": "neutral", "top1_prob": 0.99, "P_neutral": 0.99,
+    "sv_label": "neutral", "dnsmos_ovrl": 3.87
+  },
+  "tgt_emotion": { "...": "same shape" },
+  "ref_vs_tgt_speaker_sim_wavlm": 0.79,
+  "ref_dnsmos_bak": 4.21,
+  "tgt_dnsmos_bak": 3.95,
+  "meta": { "split": "...", "source_row_index": 123 }
 }
 ```
 
 ---
 
-## 5. 配置
+## 8. Project structure
 
-所有阈值集中在 `configs/default.yaml`，改 yaml 不需改代码。关键项：
-- `a.sim_min` —— A 类 speaker_similarity 门槛（默认 0.80，可选）
-- `bc_clean.edit_whitelist` —— 默认 `[style_radio]`（emotion_eval 验证最优）
-- `bc_clean.edited_neutral_min` —— edited 中性化下限（0.70）
-- `bc_clean.ref_neutral_max` —— ref "高表现" 上限（0.50）
-- `h1.cosine_min` —— H1 表达几乎不变阈值（0.97）
-- `h2.p_neutral_min` —— H2 reference 必须高置信中性（0.90）
+```
+pair_construction/
+├── README.md / README_zh.md
+├── configs/
+│   ├── default.yaml           # zh
+│   └── default_en.yaml        # en
+├── scripts/
+│   ├── 01_build_vcdata_base.py
+│   ├── 02_build_editx_base.py
+│   ├── 03_join_editx_with_vcdata.py
+│   ├── 04_run_emotion_eval.sh
+│   ├── 04b_add_dnsmos.py
+│   ├── 05_construct_A.py
+│   ├── 06_construct_B.py
+│   ├── 07_construct_C.py
+│   ├── 07b_construct_C_mixed.py
+│   ├── 07c_construct_D.py
+│   ├── 07d_construct_D_st.py
+│   ├── 07e_construct_genre.py
+│   ├── 07f_construct_D_cross_emo.py
+│   ├── 08_construct_H1.py
+│   ├── 09_construct_H2.py
+│   ├── 10_construct_H3.py
+│   ├── 11b_add_wavlm_sim.py
+│   ├── 12_filter_dnsmos_bak.py
+│   ├── _utils.py / _emotion_lookup.py / _dnsmos.py
+│   └── quality_check.py / compare_edit_modes.py
+├── runs/                       # production wrappers
+│   ├── run_zh_full.sh          # zh full: stage1 + editx + pair
+│   ├── run_zh_from_vcdata.sh   # zh skip stage1, start from editx
+│   ├── run_en_full.sh
+│   └── run_en_from_vcdata.sh
+├── run_all.sh                  # single-split orchestrator (stages 3–5)
+├── run_e2e.sh                  # full or from_vcdata mode
+└── submit_editx_batch_h200.sh  # OpenI batch submitter for EditX
+```
 
 ---
 
-## 6. 不做什么
+## 9. What this project does NOT do
 
-- ❌ 不重算 vcdata 的 best_similarity（直接读 manifest）
-- ❌ 不调 stepfun-editx 模型（直接读 paired_report.jsonl）
-- ❌ 不重新训练 emotion2vec / SenseVoice（调 `emotion_eval/scripts/`）
-- ❌ 不修改任何上游脚本
+- Does not retrain any model (MOSS-TTS, EditX, emotion2vec, SenseVoice, WavLM-L)
+- Does not regenerate any upstream audio
+- Does not mutate `vcdata_construction/outputs/` or `vc_edit/.../paired_report.jsonl`
+- Does not re-rank speaker_similarity from raw embeddings (vcdata's argmax is already the chosen ref)
 
-仅做：**读 → 标准化 → 标注 → 按规则过滤 → 输出 pair**。
+It only does: **read → normalize → join → score → filter → emit pairs**.
