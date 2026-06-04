@@ -38,3 +38,6 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# 文档（仅本地，不入 repo）
+docs/
