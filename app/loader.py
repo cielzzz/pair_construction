@@ -37,14 +37,40 @@ DURATION_CACHE_PARQUET = DATA_DIR / "duration_cache.parquet"
 
 # ─── 路径→语言/源 推断 ──────────────────────────────────────
 
+# split 显示别名（真实文件夹名 → UI 友好名）
+SPLIT_DISPLAY_ALIAS = {
+    "split_0000": "zh_demo",        # 历史 qzrun 满量 split，UI 上叫 zh_demo
+}
+
+# split 语言硬覆盖（用于规则匹配不到的历史目录）
+SPLIT_LANG_OVERRIDE = {
+    "split_0000": "zh",
+}
+
+# 全局默认源名（找不到时兜底，避免出现 unknown）
+DEFAULT_SOURCE = "instruction_0.1_enzh"
+DEFAULT_LANG = "zh"   # 当前主语料以 zh 为主；新源接入时按需调整
+
+
+def display_split(split: str) -> str:
+    """返回 UI 显示用名（带别名映射）。"""
+    return SPLIT_DISPLAY_ALIAS.get(split, split)
+
+
 def infer_lang_from_split(split: str, sample_row: Optional[dict] = None) -> str:
-    """推断 split 对应语言。先看 split 名，再回退 sample row 的 audio 路径。"""
+    """推断 split 对应语言。优先级：
+       1. SPLIT_LANG_OVERRIDE 显式覆盖
+       2. split 名关键字（zh / cn / chinese / en / english）
+       3. sample row 的 audio 路径含 /zh/ 或 /en/
+       4. 兜底 DEFAULT_LANG，避免 unknown
+    """
+    if split in SPLIT_LANG_OVERRIDE:
+        return SPLIT_LANG_OVERRIDE[split]
     s = split.lower()
     if "zh" in s or "_cn" in s or "chinese" in s:
         return "zh"
     if "en" in s or "english" in s:
         return "en"
-    # 兜底：看 sample audio 路径
     if sample_row:
         for k in ("reference_audio", "target_audio"):
             v = sample_row.get(k, "") or ""
@@ -52,21 +78,25 @@ def infer_lang_from_split(split: str, sample_row: Optional[dict] = None) -> str:
                 return "zh"
             if "/en/" in v:
                 return "en"
-    return "unknown"
+    return DEFAULT_LANG
 
 
 def infer_source_from_path(audio_path: str) -> str:
-    """从音频路径里推断数据源名。例：
-    /inspire/hdd/.../instruction_0.1_enzh/zh/... → 'instruction_0.1_enzh'
-    /inspire/.../vcdata_construction/outputs/instruction_0.1_enzh/... → 'instruction_0.1_enzh'
+    """从音频路径推断数据源。优先级：
+       1. 路径含 instruction_*_enzh / _zh / _en 段
+       2. 路径含 kxhuang/instructtts_data 视为 instruction_0.1_enzh（当前唯一上游）
+       3. 兜底 DEFAULT_SOURCE，避免 unknown
     """
     if not audio_path:
-        return "unknown"
+        return DEFAULT_SOURCE
     parts = audio_path.split("/")
     for p in parts:
         if p.startswith("instruction_") and ("_enzh" in p or "_zh" in p or "_en" in p):
             return p
-    return "unknown"
+    # kxhuang 上游 raw 数据路径兜底
+    if "/kxhuang/instructtts_data" in audio_path:
+        return DEFAULT_SOURCE
+    return DEFAULT_SOURCE
 
 
 # ─── 索引加载 ───────────────────────────────────────────────
@@ -76,14 +106,18 @@ def load_index() -> pd.DataFrame:
     """加载 pair 聚合索引（index_builder 生成）。"""
     if not INDEX_PARQUET.exists():
         return pd.DataFrame(columns=[
-            "split", "source", "language", "pair_type", "is_filtered",
+            "split", "display_split", "source", "language", "pair_type", "is_filtered",
             "n_pairs", "jsonl_path",
             "ref_hours", "tgt_hours",
             "ref_emo_dist", "tgt_emo_dist", "source_edit_tag_dist",
             "sim_wavlm_p25", "sim_wavlm_p50", "sim_wavlm_p75", "sim_wavlm_mean",
             "ref_dnsmos_mean", "tgt_dnsmos_mean",
         ])
-    return pd.read_parquet(INDEX_PARQUET)
+    df = pd.read_parquet(INDEX_PARQUET)
+    # 兼容旧 parquet：缺 display_split 列时即时补
+    if "display_split" not in df.columns:
+        df["display_split"] = df["split"].map(display_split)
+    return df
 
 
 @_CACHE(show_spinner=False)

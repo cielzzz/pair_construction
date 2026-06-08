@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from loader import (
     DATA_DIR, INDEX_PARQUET, OUTPUTS_DIR,
     infer_lang_from_split, infer_source_from_path,
-    load_duration_cache,
+    display_split, load_duration_cache,
 )
 
 
@@ -124,6 +124,7 @@ def main():
             source = infer_source_from_path(ref_path) or infer_source_from_path(tgt_path)
             rows.append({
                 "split": split,
+                "display_split": display_split(split),
                 "source": source,
                 "language": lang,
                 "pair_type": pair_type,

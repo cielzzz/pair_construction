@@ -29,7 +29,7 @@ st.sidebar.header("第一层：聚合过滤")
 
 sources = sorted(idx["source"].dropna().unique().tolist())
 languages = sorted(idx["language"].dropna().unique().tolist())
-splits_all = sorted(idx["split"].unique().tolist())
+splits_all = sorted(idx["display_split"].unique().tolist())
 pair_types_all = sorted(idx["pair_type"].unique().tolist())
 
 sel_sources = st.sidebar.multiselect("source", sources, default=sources)
@@ -43,12 +43,13 @@ filtered_mode = st.sidebar.radio(
 )
 is_filtered = filtered_mode.startswith("filtered")
 
-sub_idx = filter_index(idx,
-                       sources=sel_sources,
-                       languages=sel_langs,
-                       splits=sel_splits,
-                       pair_types=sel_types,
-                       is_filtered=is_filtered)
+# 用 display_split 列做过滤（sel_splits 里装的就是 display 值）
+sub_idx = idx.copy()
+if sel_sources: sub_idx = sub_idx[sub_idx["source"].isin(sel_sources)]
+if sel_langs:   sub_idx = sub_idx[sub_idx["language"].isin(sel_langs)]
+if sel_splits:  sub_idx = sub_idx[sub_idx["display_split"].isin(sel_splits)]
+if sel_types:   sub_idx = sub_idx[sub_idx["pair_type"].isin(sel_types)]
+sub_idx = sub_idx[sub_idx["is_filtered"] == is_filtered]
 
 if sub_idx.empty:
     st.warning("聚合层过滤后没数据。")
@@ -58,8 +59,8 @@ st.markdown(f"**第一层选中 {len(sub_idx)} 个 jsonl，"
             f"合计 {int(sub_idx['n_pairs'].sum()):,} 条 pair**")
 
 with st.expander("详细：各 jsonl 行数"):
-    st.dataframe(sub_idx[["split", "language", "pair_type", "n_pairs",
-                          "jsonl_path"]],
+    st.dataframe(sub_idx[["display_split", "language", "pair_type", "n_pairs",
+                          "jsonl_path"]].rename(columns={"display_split": "split"}),
                  use_container_width=True, hide_index=True)
 
 
@@ -76,7 +77,7 @@ dfs = []
 for _, row in sub_idx.iterrows():
     df = load_pair_jsonl(row["jsonl_path"], max_rows=int(load_cap))
     if not df.empty:
-        df["__split"] = row["split"]
+        df["__split"] = row["display_split"]
         df["__source"] = row["source"]
         df["__language"] = row["language"]
         df["__jsonl"] = row["jsonl_path"]

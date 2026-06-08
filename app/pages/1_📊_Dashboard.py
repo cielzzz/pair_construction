@@ -236,7 +236,7 @@ if not raw.empty:
 # ════════ 过滤留存（11b WavLM sim） ════════
 if not idx.empty:
     st.subheader("🎯 过滤留存率（11b WavLM-L sim）")
-    filt = idx.pivot_table(index=["split", "pair_type"],
+    filt = idx.pivot_table(index=["display_split", "pair_type"],
                            columns="is_filtered", values="n_pairs", fill_value=0).reset_index()
     filt.columns = ["split", "pair_type", "orig", "filtered"]
     filt = filt[filt["filtered"] > 0].copy()
