@@ -31,7 +31,8 @@ fi
 echo "[start] streamlit on port $PORT"
 echo "[start] SSH tunnel from 本机: ssh -L $PORT:localhost:$PORT qz_zxy_gpu_4090"
 echo "[start] 浏览器: http://localhost:$PORT"
-exec "$STREAMLIT" run "$PROJ_ROOT/app/app.py" \
+# 用 python -m streamlit 而不是 streamlit shebang，避免 PYTHONPATH/PYTHONHOME 污染导致 plotly 等找不到
+exec "$PYBIN" -m streamlit run "$PROJ_ROOT/app/app.py" \
     --server.port "$PORT" \
     --server.headless true \
     --server.address 0.0.0.0 \

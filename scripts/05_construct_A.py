@@ -34,7 +34,7 @@ def main():
     emo = EmotionTable()
     emo.load_csv(emotion_path(cfg, args.split, "per_file_dual.csv"))
     emo.load_per_pair_for_src(emotion_path(cfg, args.split, "per_pair.csv"))
-    emo.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
+    emo.load_all_link_mappings(emotion_path(cfg, args.split, ""))
 
     a_cfg = cfg["a"]
     out_path = pair_path(cfg, args.split, "A.jsonl")

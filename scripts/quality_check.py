@@ -72,9 +72,9 @@ DEFAULT_THRESHOLDS = {
         "dnsmos_min": 2.0,
     },
     "H2": {
-        # H2 self mode: ref == tgt，emotion 必然 OK
-        "emotion_ok": lambda r, t: _p_neu(r) >= 0.5,
-        "speaker_sim_min": 0.90,   # self mode 应该 cosine 接近 1
+        # H2: ref 已中性，target 更中性；legacy 脚本里只做宽松 neutral gate
+        "emotion_ok": lambda r, t: _p_neu(r) >= 0.5 and _p_neu(t) >= 0.5,
+        "speaker_sim_min": 0.30,
         "dnsmos_min": 2.0,
     },
     "H3": {
@@ -233,7 +233,7 @@ def main():
     et = EmotionTable()
     et.load_csv(emotion_path(cfg, args.split, "per_file_dual.csv"))
     et.load_per_pair_for_src(emotion_path(cfg, args.split, "per_pair.csv"))
-    et.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
+    et.load_all_link_mappings(emotion_path(cfg, args.split, ""))
     set_emotion_table(et)
 
     out_dir = Path(cfg["paths"]["outputs_root"]) / args.split / "quality"

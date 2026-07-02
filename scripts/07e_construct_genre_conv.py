@@ -47,7 +47,7 @@ def main():
     if not jo_path.exists():
         sys.exit(f"[07e] 先跑 03。缺 {jo_path}")
 
-    gc = cfg.get("genre_conv", {
+    gc = {
         "cross_pairs": [
             ["style_radio", "style_news"],
             ["style_radio", "style_chat"],
@@ -60,7 +60,8 @@ def main():
             "把这段话的播报风格从{ref_genre}变成{tgt_genre}，保持说话人不变",
             "保持当前说话人音色，把语调从{ref_genre}调整为{tgt_genre}",
         ],
-    })
+    }
+    gc.update(cfg.get("genre_conv") or {})
 
     rng = random.Random(args.seed)
 
@@ -104,6 +105,7 @@ def main():
                 "meta": {
                     "split": args.split,
                     "source_row_index": ra.get("original_idx"),
+                    "edit_source_row_index": ra.get("edit_source_row_index"),
                     "ref_genre_tag":    tag_a,
                     "tgt_genre_tag":    tag_b,
                     "cross_text":       False,

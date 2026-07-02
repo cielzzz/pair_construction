@@ -1,23 +1,23 @@
-# Streamlit 主题：暗色 + 青蓝 accent
+# Streamlit 主题：浅色 + 蓝青 accent（默认 light，用户仍可在 UI 切换）
 # 改完需要重启 streamlit 才生效
 
 [theme]
-base = "dark"
+base = "light"
 
-# 强调色（按钮、选中态、滑块）—— 青绿，区别于默认的 streamlit 红
-primaryColor = "#00d4ff"
+# 强调色（按钮、选中态、滑块）—— 偏深的蓝青，在白底上保持对比度
+primaryColor = "#0ea5e9"
 
-# 主背景 —— 比默认 dark 更暗
-backgroundColor = "#0a0e1a"
+# 主背景 —— 干净的近白
+backgroundColor = "#ffffff"
 
-# 卡片 / 侧栏背景
-secondaryBackgroundColor = "#141a2b"
+# 卡片 / 侧栏背景 —— 浅灰
+secondaryBackgroundColor = "#f1f5f9"
 
-# 字体色
-textColor = "#e2e8f0"
+# 字体色 —— 深 slate
+textColor = "#1e293b"
 
 # 字体
-font = "monospace"
+font = "sans serif"
 
 [server]
 # 反代友好

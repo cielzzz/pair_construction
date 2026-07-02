@@ -1,9 +1,10 @@
 paths:
-  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vcdata_construction/outputs/instruction_0.1_enzh/zh
+  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs/delivery_filter_10k_qz_20260604/vcdata/zh
   emotion_eval_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/emotion_eval
-  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs
+  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs/delivery_filter_10k_qz_20260604/pairs/zh
 a:
   sim_min: 0.0
+  speaker_sim_min_wavlm: 0.5
   require_flag_ok: false
   instruction: 保持参考音色，只换文本，表达方式基本不变
 bc:
@@ -14,7 +15,7 @@ bc:
   ref_top1_not_neutral: true
   edited_top1_must_be_neutral: true
   speaker_sim_min: 0.8
-  speaker_sim_min_wavlm: 0.75
+  speaker_sim_min_wavlm: 0.6
   ref_neutral_max: 0.95
 b:
   instruction_pool:
@@ -34,7 +35,7 @@ c_mixed:
   - 用平静的语气朗读以下内容
   - 保持音色但变成中性表达
 d:
-  speaker_sim_min_wavlm: 0.5
+  speaker_sim_min_wavlm: 0.4
   cosine_min: 0.95
   same_top1_label: true
   ref_top1_not_neutral: true
@@ -45,7 +46,7 @@ d:
   - 保持当前的表达方式，朗读以下文字
   - 用同样的情绪和音色，按以下文本说
 d_cross_emo:
-  speaker_sim_min_wavlm: 0.5
+  speaker_sim_min_wavlm: 0.4
   ref_top1_not_neutral: true
   tgt_top1_not_neutral: true
   same_top1_label: false
@@ -62,7 +63,7 @@ d_st:
   ref_neutral_max: 0.95
   tgt_neutral_max: 0.95
   speaker_sim_min: 0.8
-  speaker_sim_min_wavlm: 0.75
+  speaker_sim_min_wavlm: 0.7
   instruction_pool:
   - 保持当前情绪不变，换一种说话风格
   - 情绪和表达强度保持一致，换个语气说
@@ -70,24 +71,33 @@ genre:
   edit_tag_whitelist:
   - style_news
   - style_chat
-  speaker_sim_min_wavlm: 0.75
+  speaker_sim_min_wavlm: 0.3
   instruction_pool:
   - 把这段话用{tgt_genre}的风格朗读
   - 保持说话人音色，转换为{tgt_genre}的播报风格
   - 保留 speaker，用{tgt_genre}风格说以下文字
+genre_conv:
+  speaker_sim_min_wavlm: 0.8
 h1:
   sim_min: 0.0
+  speaker_sim_min_wavlm: 0.3
   cosine_min: 0.97
   same_top1_label: true
   instruction: 保持原样，不要改变表达方式
 h2:
   source_edit_tag: style_radio
+  speaker_sim_min_wavlm: 0.75
+  ref_neutral_min: 0.5
   p_neutral_min: 0.9
   require_sv_neutral: true
+  ref_top1_must_be_neutral: true
+  edited_top1_must_be_neutral: true
+  require_target_more_neutral: true
+  target_more_neutral_margin: 0.0
   instruction_pool:
   - 用中性平淡的语气说
   - 保持平稳，不带情绪
-  mode: neighbor
+  mode: ref_to_edited
 h3:
   instruction_pool:
   - 请根据指令生成新内容，不要复制参考音频的文本
@@ -95,6 +105,18 @@ h3:
   random_seed: 42
   negatives_per_anchor: 2
   instruction: 请根据指令生成新内容，不要复制参考音频的文本
+i:
+  timbre_speaker_sim_min_wavlm: 0.55
+  duration_ratio_min: 0.85
+  duration_ratio_max: 1.15
+  pause_pattern_jaccard_min: 0.3
+  energy_contour_corr_min: 0.4
+j_fast:
+  speaker_sim_min_wavlm: 0.7
+  require_speed_direction_pass: true
+j_slow:
+  speaker_sim_min_wavlm: 0.7
+  require_speed_direction_pass: true
 dnsmos_bak_filter:
   apply: false
   ref_bak_min: 3.5

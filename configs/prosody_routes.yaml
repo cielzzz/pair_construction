@@ -1,0 +1,90 @@
+paths:
+  project_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction
+  existing_pair_construction: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction
+  vc_edit_framework: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit/vc_edit_framework
+  vc_edit_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit
+  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs
+  default_source_jsonl: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs/delivery_filter_10k_langsplit_qz_20260604_run02/vcdata_job_runs/zh/zxy-delivery10k-vceditx-delivery10k-langsplit-0604-run02-g11/filtered_manifest_0009/manifest_shard0.jsonl
+
+python:
+  analysis_python: /inspire/ssd/project/embodied-multimodality/public/xyzhang/anaconda3/envs/emotion/bin/python
+  conda_bin: /inspire/ssd/project/embodied-multimodality/public/yqzhang/miniconda3/bin/conda
+  step_editx_env: step_audio_editx
+
+step_audio_editx:
+  model_dir: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit/models/Step-Audio-EditX
+  tokenizer_dir: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit/models/Step-Audio-Tokenizer
+  repo_dir: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit/external/Step-Audio-EditX
+  run_script: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vc_edit/vc_edit_framework/scripts/run_step_editx.py
+  speed_tags:
+    - speed_faster
+    - speed_slower
+
+speed_edit:
+  min_duration_sec: 2.0
+  max_duration_sec: 12.0
+  expected_duration_ratio:
+    speed_faster:
+      max: 0.97
+    speed_more_faster:
+      max: 0.88
+    speed_slower:
+      min: 1.03
+    speed_more_slower:
+      min: 1.12
+  instruction_pool_by_language:
+    zh:
+      speed_faster:
+        - 保持音色和文本不变，把语速调快一些。
+        - 仍然说同一句话，但整体说得更快。
+      speed_more_faster:
+        - 保持音色和文本不变，把语速明显调快。
+        - 仍然说同一句话，但用更快的节奏说完。
+      speed_slower:
+        - 保持音色和文本不变，把语速放慢一些。
+        - 仍然说同一句话，但整体说得更慢。
+      speed_more_slower:
+        - 保持音色和文本不变，把语速明显放慢。
+        - 仍然说同一句话，但用更舒缓的节奏说完。
+    en:
+      speed_faster:
+        - Keep the timbre and text unchanged, but speak a bit faster.
+        - Say the same sentence again, but at a faster pace.
+      speed_more_faster:
+        - Keep the timbre and text unchanged, but speak noticeably faster.
+        - Say the same sentence again, but finish it with a much quicker rhythm.
+      speed_slower:
+        - Keep the timbre and text unchanged, but speak a bit slower.
+        - Say the same sentence again, but at a slower pace.
+      speed_more_slower:
+        - Keep the timbre and text unchanged, but speak noticeably slower.
+        - Say the same sentence again, but with a more relaxed pace.
+  instruction_pool:
+    speed_faster:
+      - 保持音色和文本不变，把语速调快一些。
+      - 仍然说同一句话，但整体说得更快。
+    speed_more_faster:
+      - 保持音色和文本不变，把语速明显调快。
+      - 仍然说同一句话，但用更快的节奏说完。
+    speed_slower:
+      - 保持音色和文本不变，把语速放慢一些。
+      - 仍然说同一句话，但整体说得更慢。
+    speed_more_slower:
+      - 保持音色和文本不变，把语速明显放慢。
+      - 仍然说同一句话，但用更舒缓的节奏说完。
+
+prosody_metrics:
+  frame_ms: 20
+  hop_ms: 10
+  min_pause_sec: 0.15
+  contour_points: 200
+  f0_min_hz: 50
+  f0_max_hz: 500
+
+prosody_transfer:
+  instruction: 使用 prosody_ref 的语速、停顿、节奏和语调；不要模仿它的音色，音色使用 timbre_ref。
+  instruction_by_language:
+    zh: 使用 prosody_ref 的语速、停顿、节奏和语调；不要模仿它的音色，音色使用 timbre_ref。
+    en: Keep the speaking rate, pauses, rhythm, and intonation of prosody_ref_audio; do not imitate its timbre, and instead use the speaker timbre from timbre_ref_audio.
+  pair_type: I
+  require_different_speaker: false

@@ -34,7 +34,7 @@ This repo joins those two streams, attaches emotion scores, and emits 11 categor
 | **D_cross_emo** | ref_audio (vcdata, emotion X) | original_audio (real human, emotion Y) | n/a (vcdata only) | Cross-emotion conversion — same speaker (clone vs real) but different emotion category |
 | **Genre** | ref_audio | edited_audio (genre-converted) | zh: `[news, chat]` / en: `[news, radio]` | Genre / delivery-style conversion, same text |
 | **H1** | original_audio | ref_audio | A subset with high emotion-cosine | Zero-change control ("keep as-is") |
-| **H2** | edited_audio (neutralized) | self or neutral neighbor | neutralizer tag | Already-satisfied control ("be more neutral") |
+| **H2** | ref_audio (already neutral) | edited_audio (more neutral) | neutralizer tag | Neutral -> more neutral control |
 | **H3** | any A reference | random cross-row reference | A with cross-row shuffle | Cross-speaker negative |
 
 The **neutralizing edit tag differs by language**: `style_radio` is the strongest neutralizer for Chinese; `style_chat` is the strongest for English. Genre's whitelist is the complement set, so B/C/H2 (which need a neutralizer) and Genre (which should not start from already-neutral) never share a tag.
@@ -69,13 +69,16 @@ The **neutralizing edit tag differs by language**: `style_radio` is the stronges
    ┌────────┬────────┬─────┴────┬─────────┬─────────┬────────┐
    ▼        ▼        ▼          ▼         ▼         ▼        ▼
   05 A   06 B   07 C / 07b C_mixed   07c D / 07d D_st / 07f D_cross_emo
-  08 H1     09 H2     10 H3     07e Genre
+  08 H1     09 H2     10 H3     07e Genre / Genre_conv
                            │
                            ▼
-            11b add_wavlm_sim   (WavLM-L + ECAPA-TDNN re-score, emits *_filtered.jsonl)
+            11b add_wavlm_sim   (WavLM-L + ECAPA-TDNN re-score for all 12 pair types, writes pairs/scored/*.jsonl)
                            │
                            ▼
             12 filter_dnsmos_bak (anti-electronic-tone, optional apply)
+                           │
+                           ▼
+                13 qc_pairs (final quality gate, writes quality_gate/)
                            │
                            ▼
                   outputs/<split>/pairs/*.jsonl
@@ -100,6 +103,21 @@ You only need the upstream envs (`moss-tts`, `step_audio_editx`) if you are also
 
 ## 5. Quickstart
 
+### 5.0 Unified entrypoint
+
+If you want `vcdata/edit` on QZ and `pair` locally, use:
+
+```bash
+cd /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction
+
+# submit vcdata + edit to QZ
+bash run_pipeline_interface.sh submit-qz
+
+# after upstream finishes, construct pairs locally from a run_root
+bash run_pipeline_interface.sh pair-local zh zh_slim_0001 configs/default.yaml cuda:0 \
+  /path/to/run_root
+```
+
 ### 5.1 Smoke test (single GPU, single split)
 
 End-to-end on 200 sentences locally:
@@ -122,6 +140,8 @@ for s in 05_construct_A 06_construct_B 07_construct_C 07b_construct_C_mixed \
 done
 $WAVLMPY scripts/11b_add_wavlm_sim.py --split $SPLIT
 $EMOPY  scripts/12_filter_dnsmos_bak.py --split $SPLIT
+# final QC is run automatically by scripts/run_pairs_local.sh;
+# if you drive steps manually, run qc_pairs.py once over the completed split root.
 ```
 
 For English, switch `--config configs/default_en.yaml` (or `export PAIR_CONFIG=configs/default_en.yaml`).
@@ -152,7 +172,7 @@ Last verified end-to-end run on 200 sentences:
 | zh | 200 | 43 | 43 | 81 | 41 | 26 | 19 | 400 | 85 | 138 | 400 | 1476 |
 | en | 200 | 45 | 45 | 74 | 25 | 34 | 51 | 400 | 40 | 115 | 200 | 1429 |
 
-Numbers above are pre-`_filtered`. WavLM-L speaker-sim filtered counts: see `outputs/<split>/pairs/*_filtered.jsonl`.
+Numbers above are raw pair counts before the final QC gate. Final accepted / rejected counts are written to `outputs/<split>/quality_gate/summary.json`.
 
 ---
 
@@ -175,37 +195,37 @@ Key knob categories:
 | `genre.edit_tag_whitelist` | which tags drive Genre (must exclude neutralizer tag) |
 | `bc / d / d_st / c_mixed / d_cross_emo / genre.speaker_sim_min_wavlm` | per-type WavLM-L speaker-similarity floor |
 | `h1.cosine_min` | "expression unchanged" threshold for the H1 control |
-| `h2.mode` | `self` (any neutral edited as both sides) or `neighbor` (paired with another neutral) |
+| `h2.mode` | default `ref_to_edited`; legacy `self` / `neighbor` only for backward-compatible ablations |
+| `h2.ref_neutral_min / h2.p_neutral_min / h2.target_more_neutral_margin` | H2's ref/tgt neutral floors and the minimum "target more neutral" margin |
 | `dnsmos_bak_filter.apply` | toggle the optional anti-electronic-tone post-filter |
 
-### 6.1 How "neutral" is decided (P_neutral semantics)
+## 6.1 Experimental prosody routes
 
-There is **no single global threshold** for "neutral". Emotion is judged in two layers:
+This repo now also carries two additional pair-generation routes under `scripts/` and `configs/prosody_routes.yaml`. They are additive and do not change the default `run_pairs_local.sh` mainline.
 
-1. **Hard condition** `top1_label == "neutral"` — emotion2vec's nine-class winner is `neutral`.
-2. **Soft condition** `P_neutral` — the actual neutral-class probability (continuous, 0–1).
+- `J_fast` / `J_slow`: `01_prepare_step_speed_jobs.py -> run_step_editx_local.py -> 02_collect_step_speed_pairs.py -> 03_add_prosody_metrics.py`, with launchers `run_speed_pipeline.sh` and `run_zh_en_slim500_speed.sh`.
+- `I` (SeedVC prosody transfer): `07_prepare_prosody_no_timbre_seedvc_jobs.py -> 08_run_seedvc_jobs.py -> 09_collect_seedvc_prosody_no_timbre_pairs.py -> 03_add_prosody_metrics.py`, with launcher `run_seedvc_prosody_no_timbre_slim500.sh`.
+- `run_run03_prosody_speed_pairs.sh` can write these optional types into the normal split `pairs/` layout. When QC is enabled, `04c_add_pair_audio_metrics.py` first evaluates missing generated-audio emotion/SenseVoice/DNSMOS metrics and merges them into `emotion/per_file_dual.csv`.
+- In the Qizhi batch submitter/runner, `RUN_IJ_ON_QZ` now defaults to `1`, so I/J are included by default after the regular pair/QC stage. Set `RUN_IJ_ON_QZ=0` only when you intentionally want to skip them.
+- Supporting docs live in [docs/prosody_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_routes.md) and [docs/prosody_no_timbre_model_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_no_timbre_model_routes.md).
+- The old DSP-based prosody-no-timbre prototype is intentionally not synced into this repo.
 
-Each pair type uses different lower / upper bounds, biased by language:
+## 6.2 B1 local edit (M1 spike)
 
-| Knob | zh | en | Meaning |
-|---|---|---|---|
-| `bc.edited_neutral_min` | **0.7** | **0.3** | B/C neutral side must reach ≥ this |
-| `bc.ref_neutral_max` | 0.95 | 0.95 | B/C expressive side must stay ≤ this (else too flat) |
-| `c_mixed.ref_neutral_max` | 0.95 | 0.95 | Same as above for C_mixed |
-| `d.ref_neutral_max` / `tgt_neutral_max` | 0.95 | 0.95 | Both sides of D must be expressive (≤ 0.95) |
-| `d_st.*neutral_max` | 0.95 | 0.95 | Same for D_st |
-| **`d_cross_emo.*neutral_max`** | **0.5** | **0.5** | Cross-emotion requires both sides to be very far from neutral |
-| `h2.p_neutral_min` | **0.9** | **0.5** | H2 reference must be high-confidence neutral |
+B1 local content editing is currently an M1 spike only. It does not batch-produce data and it does not change the main 12 + I/J pair pipeline.
 
-**Why zh vs en differ**: emotion2vec is trained on Chinese, so on Chinese audio it yields sharp distributions (a clearly-neutralized sample easily reaches `P_neutral ≥ 0.9`). The same model on English yields flatter distributions — the strongest neutralizer (`style_chat`) tops out around `P_neutral ≈ 0.3-0.5`. English thresholds are uniformly relaxed.
-
-**Worked example** for a row with `P_neutral = 0.024`:
-- The audio is **almost certainly non-neutral** (only 2.4% of the neutral class).
-- ❌ Rejected as B/C neutral side (needs ≥ 0.7 / 0.3).
-- ✅ Accepted as B/C expressive side (allowed ≤ 0.95).
-- ✅ Accepted as D / D_cross_emo side (D needs ≤ 0.95; D_cross_emo needs ≤ 0.5).
-
-**Independent signal** `sv_label`: SenseVoice runs a separate emotion classifier. `bc.edited_sv_must_be_neutral` can force dual-model consensus, but it is currently `false` everywhere because en dual-model agreement rate is only ~10%.
+- New tooling:
+  - `scripts/13_extract_alignment.py`: ASR/alignment wrapper for `paraformer`, `qwen`, `whisperx`, with explicit fallback timing when no backend returns word timestamps.
+  - `scripts/14_select_span.py`: selects edit spans from alignment JSON via `anchor_word`, `filler_words`, `regex`, or `manual_span`.
+  - `scripts/15_run_ming_edit_poc.py`: reproducible Ming-UniAudio-Edit PoC runner that keeps Ming upstream code unchanged and applies only runtime input/device/save workarounds.
+- PoC outputs live under `pairs/poc/`, including `pairs/poc/B1_poc.jsonl`.
+- Ming env: `/inspire/ssd/project/embodied-multimodality/public/xyzhang/anaconda3/envs/ming-uniaudio-edit`, created after sourcing `/inspire/ssd/project/embodied-multimodality/public/xyzhang/activate_conda.sh`.
+- M1 result: the alignment/span plumbing runs, but current Step-Audio-EditX has no native span API. Ming-UniAudio passes the B1.1 `明天 -> 后天` automated text/speaker checks after installing `flash_attn` and using `pairs/poc/ming_model_flash`; continue with small-sample validation before batch production.
+- Decision docs:
+  - [docs/B1_alignment_spike_result.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/B1_alignment_spike_result.md)
+  - [docs/B1_editx_api_check.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/B1_editx_api_check.md)
+  - [docs/B1_ming_uniaudio_check.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/B1_ming_uniaudio_check.md)
+  - [docs/B1_route_comparison.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/B1_route_comparison.md)
 
 ---
 
@@ -234,6 +254,12 @@ Every pair jsonl line:
   "meta": { "split": "...", "source_row_index": 123 }
 }
 ```
+
+QC outputs use side-prefixed metrics such as `ref_top1`/`tgt_top1`
+(short aliases), `ref_top1_label`, `tgt_top1_label`, `ref_p_neutral`,
+`tgt_p_neutral`, `ref_sv_label`, `tgt_sv_label`, `ref_dnsmos_ovrl`,
+`tgt_dnsmos_ovrl`, `ref_dnsmos_sig`, `tgt_dnsmos_sig`, `ref_dnsmos_bak`,
+and `tgt_dnsmos_bak`.
 
 ---
 
@@ -278,58 +304,7 @@ pair_construction/
 
 ---
 
-## 9. Web dashboard (Streamlit)
-
-A 3-page Streamlit app under `app/` browses pair data, monitors growth, and compares data sources.
-
-```
-app/
-├── app.py                       # entry point
-├── index_builder.py             # scans outputs/<split>/pairs/*.jsonl → index.parquet
-├── raw_scanner.py               # scans upstream raw split_*.jsonl → raw_source.parquet + duration_cache.parquet
-├── loader.py                    # cached loaders shared by all pages
-├── start.sh                     # convenience launcher (uses kxhuang tts env)
-└── pages/
-    ├── 1_📊_Dashboard.py        # KPI cards, source/lang/type distributions, retention rate
-    ├── 2_🔍_Browser.py          # multi-dim filtering, per-pair detail with audio playback
-    └── 3_📈_Source_compare.py   # cross-source comparison (each new data source = a new column)
-```
-
-### Build indices and launch (on the GPU host)
-
-```bash
-# 1) Pre-aggregate pair-side data
-python app/index_builder.py
-
-# 2) Pre-aggregate upstream raw data (gives "total hours" + duration cache)
-python app/raw_scanner.py \
-  --add instruction_0.1_enzh:zh:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/zh \
-  --add instruction_0.1_enzh:en:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/en
-
-# 3) Re-run index_builder so it can join duration_cache → per-split pair hours
-python app/index_builder.py
-
-# 4) Launch
-bash app/start.sh        # default port 8501
-```
-
-### Local browser access (SSH tunnel)
-
-```bash
-# From your laptop
-ssh -L 8501:localhost:8501 <gpu_host>
-# Then open http://localhost:8501
-```
-
-### Cross-filterable tags (Browser page)
-
-source, language, split, pair_type, is_filtered, source_edit_tag,
-ref_emotion.top1, tgt_emotion.top1, sim_wavlm range, ref_dnsmos_bak range,
-tgt_dnsmos_bak range, instruction keyword, ref/tgt text keyword.
-
----
-
-## 10. What this project does NOT do
+## 9. What this project does NOT do
 
 - Does not retrain any model (MOSS-TTS, EditX, emotion2vec, SenseVoice, WavLM-L)
 - Does not regenerate any upstream audio

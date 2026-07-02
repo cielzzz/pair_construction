@@ -12,7 +12,11 @@ import argparse, json, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _utils import load_config, iter_jsonl, write_jsonl, emotion_path, pair_path
+from _utils import (
+    load_config, iter_jsonl, write_jsonl,
+    emotion_path, pair_path, scored_pair_path, filtered_pair_path,
+    base_pair_jsonl_paths, preferred_pair_input_path,
+)
 from _emotion_lookup import EmotionTable
 
 
@@ -35,7 +39,7 @@ def main():
     emo = EmotionTable()
     emo.load_csv(emotion_path(cfg, args.split, "per_file_dual.csv"))
     emo.load_per_pair_for_src(emotion_path(cfg, args.split, "per_pair.csv"))
-    emo.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
+    emo.load_all_link_mappings(emotion_path(cfg, args.split, ""))
 
     def dnsmos_bak(audio_path):
         rec = emo.get(audio_path)
@@ -45,12 +49,10 @@ def main():
         try: return float(v)
         except (TypeError, ValueError): return None
 
-    pair_dir = Path(cfg["paths"]["outputs_root"]) / args.split / "pairs"
     summary = []
-    for jsonl_name in sorted(pair_dir.glob("*.jsonl")):
-        if "_filtered" in jsonl_name.name or "_bakfilt" in jsonl_name.name:
-            continue
-        rows = list(iter_jsonl(jsonl_name))
+    for raw_pair_path in base_pair_jsonl_paths(cfg, args.split):
+        source_path = preferred_pair_input_path(cfg, args.split, raw_pair_path.name)
+        rows = list(iter_jsonl(source_path))
         kept = []
         for r in rows:
             r["ref_dnsmos_bak"] = dnsmos_bak(r.get("reference_audio", ""))
@@ -63,19 +65,22 @@ def main():
             if rb >= ref_min and tb >= tgt_min:
                 kept.append(r)
 
-        write_jsonl(jsonl_name, rows)  # in-place 加字段
+        scored_path = scored_pair_path(cfg, args.split, raw_pair_path.name)
+        write_jsonl(scored_path, rows)
         if apply_filter:
-            out = jsonl_name.with_name(jsonl_name.stem + "_bakfilt.jsonl")
-            write_jsonl(out, kept)
-            summary.append((jsonl_name.name, len(rows), len(kept), out.name))
+            legacy_out = pair_path(cfg, args.split, raw_pair_path.stem + "_bakfilt.jsonl")
+            layered_out = filtered_pair_path(cfg, args.split, raw_pair_path.stem + "_bakfilt.jsonl")
+            write_jsonl(legacy_out, kept)
+            write_jsonl(layered_out, kept)
+            summary.append((raw_pair_path.name, len(rows), len(kept), legacy_out.name, scored_path.name))
         else:
-            summary.append((jsonl_name.name, len(rows), len(rows), "(只写字段)"))
+            summary.append((raw_pair_path.name, len(rows), len(rows), "(只写字段)", scored_path.name))
 
     print(f"\n=== {args.split} dnsmos_bak {'过滤' if apply_filter else '记录'} 汇总 ===")
-    print(f"{'jsonl':<28} {'orig':<6} {'kept':<6} {'output':<30}")
-    for n, o, k, out in summary:
+    print(f"{'jsonl':<28} {'orig':<6} {'kept':<6} {'output':<30} {'scored':<24}")
+    for n, o, k, out, scored_name in summary:
         kp = f"{100*k/o:.0f}%" if o else "—"
-        print(f"{n:<28} {o:<6} {k:<6} ({kp:<5}) {out}")
+        print(f"{n:<28} {o:<6} {k:<6} ({kp:<5}) {out:<30} {scored_name:<24}")
 
 
 if __name__ == "__main__":

@@ -19,20 +19,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # read_yaml 必须用 emotion env 的 python（有 pyyaml）。
-EMOTION_PY_BIN="/inspire/ssd/project/embodied-multimodality/public/xyzhang/anaconda3/envs/emotion/bin/python"
+EMOTION_PY_BIN="${EMOTION_PY_BIN:-/inspire/ssd/project/embodied-multimodality/public/xyzhang/anaconda3/envs/emotion/bin/python}"
 # 支持通过 PAIR_CONFIG 环境变量切换配置文件（与 _utils.load_config 一致）
 CONFIG_FILE="${PAIR_CONFIG:-$PROJ_ROOT/configs/default.yaml}"
 read_yaml() {
     "$EMOTION_PY_BIN" -c "import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])" \
         "$CONFIG_FILE" "$@"
 }
-VCDATA_ROOT="${VCDATA_ROOT:-$(read_yaml paths vcdata_root)}"   # env 优先
-EVAL_ROOT=$(read_yaml paths emotion_eval_root)
-OUT_ROOT=$(read_yaml paths outputs_root)
+VCDATA_ROOT="${VCDATA_ROOT:-$(read_yaml paths vcdata_root)}"
+EVAL_ROOT="${EMOTION_EVAL_ROOT:-$(read_yaml paths emotion_eval_root)}"
+OUT_ROOT="${PAIR_OUTPUTS_ROOT:-$(read_yaml paths outputs_root)}"
 
 SPLIT_DIR="$VCDATA_ROOT/$SPLIT"
 OUT="$OUT_ROOT/$SPLIT/emotion"
 mkdir -p "$OUT"
+INTERMEDIATE_ROOT="$OUT_ROOT/$SPLIT/intermediate"
+AUDIO_INDEX_JSON="$INTERMEDIATE_ROOT/audio_index.json"
 
 # ─── 复用 qzrun 已有结果（仅 split_0000 适用） ───────────
 if [ "$ARG2" = "--reuse-qzrun" ]; then
@@ -60,17 +62,41 @@ DEVICE="$ARG2"
 export MODELSCOPE_CACHE="$EVAL_ROOT/model_cache/modelscope"
 export HF_HOME="$EVAL_ROOT/model_cache/hf"
 
+# ─── 0) 预建 split 音频索引（供 02/04 共享） ─────────────
+"$EMOTION_PY_BIN" - <<PY
+import sys
+
+sys.path.insert(0, "$SCRIPT_DIR")
+from _utils import load_config, load_or_build_audio_index
+
+cfg = load_config("$CONFIG_FILE")
+idx = load_or_build_audio_index(cfg, "$SPLIT", force_rebuild=True)
+print(f"[04] audio index ready: ref={len(idx.get('ref_audio_by_row', {}))}, "
+      f"edit_tags={sorted(idx.get('edit_audio_by_tag_row', {}).keys())}")
+PY
+
 # ─── 1) 给 original_audio 建 symlink 目录 ─────────────
 ORIG_DIR="$OUT/_links_original"
-rm -rf "$ORIG_DIR" && mkdir -p "$ORIG_DIR"
+mkdir -p "$ORIG_DIR"
 "$EMOTION_PY_BIN" - <<PY
 import json, os
 from pathlib import Path
-base = Path("$PROJ_ROOT/outputs/$SPLIT/intermediate/vcdata_base.jsonl")
+base = Path("$INTERMEDIATE_ROOT/vcdata_base.jsonl")
 linkdir = Path("$ORIG_DIR")
 if not base.exists():
     raise SystemExit(f"先跑 01: 缺 {base}")
 seen = set()
+
+def ensure_symlink(src: str, dst: Path):
+    if os.path.lexists(dst):
+        try:
+            if os.path.realpath(dst) == os.path.realpath(src):
+                return
+        except OSError:
+            pass
+        os.unlink(dst)
+    os.symlink(src, dst)
+
 with open(base) as f:
     for ln in f:
         r = json.loads(ln)
@@ -79,10 +105,7 @@ with open(base) as f:
             continue
         seen.add(src)
         dst = linkdir / f"{r['original_idx']:06d}{Path(src).suffix}"
-        try:
-            os.symlink(src, dst)
-        except FileExistsError:
-            pass
+        ensure_symlink(src, dst)
 print(f"linked {len(seen)} original audios → {linkdir}")
 PY
 
@@ -90,14 +113,52 @@ PY
 INPUTS=()
 INPUTS+=( "-i" "original=$ORIG_DIR" )
 INPUTS+=( "-i" "ref=$SPLIT_DIR/ref_audio" )
-# 对每个 edit tag，glob 任意 stepaudio_<tag>_<split>_*/<tag> 目录
-for tag in style_radio style_remove style_news style_chat emotion_coldness emotion_remove; do
-    for cand in "$SPLIT_DIR"/stepaudio_${tag}_${SPLIT}_*/${tag}; do
-        if [ -d "$cand" ]; then
-            INPUTS+=( "-i" "${tag}=$cand" )
-            break
-        fi
-    done
+mapfile -t EDIT_INPUTS < <("$EMOTION_PY_BIN" - <<PY
+import csv
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "$SCRIPT_DIR")
+from _utils import load_config, load_or_build_audio_index
+
+cfg = load_config("$CONFIG_FILE")
+idx = load_or_build_audio_index(cfg, "$SPLIT")
+out_root = Path("$OUT")
+
+def ensure_symlink(src: str, dst: Path):
+    if os.path.lexists(dst):
+        try:
+            if os.path.realpath(dst) == os.path.realpath(src):
+                return
+        except OSError:
+            pass
+        os.unlink(dst)
+    os.symlink(src, dst)
+
+for tag, row_map in sorted(idx.get("edit_audio_by_tag_row", {}).items()):
+    linkdir = out_root / f"_links_{tag}"
+    linkdir.mkdir(parents=True, exist_ok=True)
+    mapping = []
+    for row, src in sorted(row_map.items(), key=lambda item: int(item[0])):
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+        dst = linkdir / f"{int(row):06d}{src_path.suffix}"
+        ensure_symlink(str(src_path), dst)
+        mapping.append((str(dst), str(src_path)))
+    if not mapping:
+        continue
+    with open(linkdir / "_mapping.csv", "w", encoding="utf-8", newline="") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["link_wav", "edited_audio"])
+        writer.writerows(mapping)
+    print(f"{tag}={linkdir}")
+PY
+)
+for item in "${EDIT_INPUTS[@]}"; do
+    [ -n "$item" ] || continue
+    INPUTS+=( "-i" "$item" )
 done
 echo "[04] inputs: ${INPUTS[*]}"
 
@@ -171,11 +232,13 @@ echo "[04] emotion eval done. outputs → $OUT"
 
 # ─── 6) DNSMOS（Microsoft P.835 raw 分数，与 vcdata 原始 dnsmos 字段同口径） ─
 # 用 moss_ttsd_sglang env 跑（emotion env 没装 onnxruntime；该 env 有 onnxruntime+librosa）
-DNSMOS_PY="/inspire/ssd/project/embodied-multimodality/public/yqzhang/miniconda3/envs/moss_ttsd_sglang/bin/python"
+DNSMOS_PY="${DNSMOS_PY:-/inspire/ssd/project/embodied-multimodality/public/yqzhang/miniconda3/envs/moss_ttsd_sglang/bin/python}"
 if [ -x "$DNSMOS_PY" ]; then
     echo "[04b] 跑 DNSMOS（给 per_file_dual.csv 加 dnsmos_ovrl/sig/bak 三列）..."
     PAIR_CONFIG="$CONFIG_FILE" VCDATA_ROOT="${VCDATA_ROOT:-}" \
-        "$DNSMOS_PY" "$SCRIPT_DIR/04b_add_dnsmos.py" --split "$SPLIT" || echo "[04b] [warn] DNSMOS 失败，继续"
+        "$DNSMOS_PY" "$SCRIPT_DIR/04b_add_dnsmos.py" \
+        --split "$SPLIT" \
+        --flush-every "${DNSMOS_FLUSH_EVERY:-500}" || echo "[04b] [warn] DNSMOS 失败，继续"
 else
     echo "[04b] [skip] 找不到 moss_ttsd_sglang env，跳过 DNSMOS"
 fi

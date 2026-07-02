@@ -37,11 +37,11 @@ sel_langs = st.sidebar.multiselect("language", languages, default=languages)
 sel_splits = st.sidebar.multiselect("split", splits_all, default=splits_all)
 sel_types = st.sidebar.multiselect("pair_type", pair_types_all, default=pair_types_all)
 filtered_mode = st.sidebar.radio(
-    "用 orig 还是 filtered jsonl？",
-    options=["orig（未过滤）", "filtered（已过 11b sim）"],
+    "数据档位",
+    options=["orig", "quality_gate"],
     index=0,
 )
-is_filtered = filtered_mode.startswith("filtered")
+is_filtered = filtered_mode == "quality_gate"
 
 # 用 display_split 列做过滤（sel_splits 里装的就是 display 值）
 sub_idx = idx.copy()
@@ -173,41 +173,80 @@ st.markdown(f"**pair_id**: `{row['pair_id']}`  •  "
             f"**type**: `{row['pair_type']}`  •  "
             f"**split**: `{row['__split']}` ({row['__language']})")
 
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown("#### reference")
-    st.markdown(f"**text**: {row['reference_text']}")
-    if row.get("reference_audio"):
+def _audio_card(title: str, text: str, audio_path, extra: dict | None = None):
+    st.markdown(f"#### {title}")
+    if text:
+        st.markdown(f"**text**: {text}")
+    if audio_path:
         try:
-            st.audio(row["reference_audio"])
+            st.audio(audio_path)
         except Exception as e:
-            st.warning(f"音频加载失败: {e}\n路径: `{row['reference_audio']}`")
-    st.json({
-        "top1": row.get("ref_emo_top1"),
-        "p_neutral": row.get("ref_emo_p_neu"),
-        "sv_label": row.get("ref_sv_label"),
-        "dnsmos_ovrl": row.get("ref_dnsmos_ovrl"),
-        "dnsmos_bak": row.get("ref_dnsmos_bak"),
-    })
-with c2:
-    st.markdown("#### target")
-    st.markdown(f"**text**: {row['target_text']}")
-    if row.get("target_audio"):
-        try:
-            st.audio(row["target_audio"])
-        except Exception as e:
-            st.warning(f"音频加载失败: {e}\n路径: `{row['target_audio']}`")
-    st.json({
-        "top1": row.get("tgt_emo_top1"),
-        "p_neutral": row.get("tgt_emo_p_neu"),
-        "sv_label": row.get("tgt_sv_label"),
-        "dnsmos_ovrl": row.get("tgt_dnsmos_ovrl"),
-        "dnsmos_bak": row.get("tgt_dnsmos_bak"),
-    })
+            st.warning(f"音频加载失败: {e}\n路径: `{audio_path}`")
+    if extra:
+        st.json(extra)
+
+
+# I 类：reference (= prosody 源) + timbre_ref + target，3 卡片并列
+# 其它类：reference + target，2 卡片
+has_timbre = bool(row.get("timbre_ref_audio"))
+
+if has_timbre:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _audio_card(
+            "reference · 韵律/节奏来源",
+            row.get("reference_text", ""),
+            row.get("reference_audio"),
+            {"top1": row.get("ref_emo_top1"), "p_neutral": row.get("ref_emo_p_neu"),
+             "sv_label": row.get("ref_sv_label"),
+             "dnsmos_ovrl": row.get("ref_dnsmos_ovrl"),
+             "dnsmos_bak": row.get("ref_dnsmos_bak")},
+        )
+    with c2:
+        _audio_card(
+            "timbre_ref · 音色来源",
+            row.get("timbre_ref_text", ""),
+            row.get("timbre_ref_audio"),
+        )
+    with c3:
+        _audio_card(
+            "target · 合成结果",
+            row.get("target_text", ""),
+            row.get("target_audio"),
+            {"top1": row.get("tgt_emo_top1"), "p_neutral": row.get("tgt_emo_p_neu"),
+             "sv_label": row.get("tgt_sv_label"),
+             "dnsmos_ovrl": row.get("tgt_dnsmos_ovrl"),
+             "dnsmos_bak": row.get("tgt_dnsmos_bak")},
+        )
+else:
+    c1, c2 = st.columns(2)
+    with c1:
+        _audio_card(
+            "reference",
+            row.get("reference_text", ""),
+            row.get("reference_audio"),
+            {"top1": row.get("ref_emo_top1"), "p_neutral": row.get("ref_emo_p_neu"),
+             "sv_label": row.get("ref_sv_label"),
+             "dnsmos_ovrl": row.get("ref_dnsmos_ovrl"),
+             "dnsmos_bak": row.get("ref_dnsmos_bak")},
+        )
+    with c2:
+        _audio_card(
+            "target",
+            row.get("target_text", ""),
+            row.get("target_audio"),
+            {"top1": row.get("tgt_emo_top1"), "p_neutral": row.get("tgt_emo_p_neu"),
+             "sv_label": row.get("tgt_sv_label"),
+             "dnsmos_ovrl": row.get("tgt_dnsmos_ovrl"),
+             "dnsmos_bak": row.get("tgt_dnsmos_bak")},
+        )
 
 st.markdown(f"**instruction**: {row['instruction']}")
-st.markdown(f"**sim_wavlm**: {row.get('sim_wavlm')}  •  "
-            f"**source_edit_tag**: {row.get('source_edit_tag')}")
+sim_line = f"**sim_wavlm (ref↔tgt)**: {row.get('sim_wavlm')}"
+if row.get("timbre_sim_wavlm") is not None:
+    sim_line += f"  •  **timbre_sim_wavlm (timbre↔tgt)**: {row.get('timbre_sim_wavlm')}"
+sim_line += f"  •  **source_edit_tag**: {row.get('source_edit_tag')}"
+st.markdown(sim_line)
 
 with st.expander("完整 JSON"):
     raw = row.get("_raw")

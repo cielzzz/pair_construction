@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""11: 给所有 pair JSONL 加 ref_vs_tgt_speaker_sim 字段 + 对配置了 speaker_sim_min 的类产出 _filtered.jsonl
+"""11: legacy helper for CAM++ speaker similarity + optional *_filtered.jsonl output
+
+注意：
+- 当前主链与 `_infra` 现行流程已经切到 `11b_add_wavlm_sim.py` + `qc_pairs.py`
+- speaker similarity 的正式 gate 现在统一在 `qc_pairs.py` 内完成
+- 本脚本仅保留给旧实验 / 旧产物兼容，不再是 `run_pairs_local.sh` 的默认步骤
 
 策略（2026-05-29 定）：
   bc.speaker_sim_min  -> 应用于 B + C 类（同 vcdata 源派生，可强求音色一致）
@@ -23,6 +28,7 @@ SIM_KEY = {
     "C_mixed": None,
     "D":       None,
     "D_st":    "d_st",
+    "H2":      "h2",
 }
 
 
@@ -50,7 +56,7 @@ def main():
 
     cam_loaded = [False]
     def live_sim(ref, tgt):
-        from quality_check import compute_sim, get_sim_model
+        from qc_pairs import compute_sim, get_sim_model
         if not cam_loaded[0]:
             get_sim_model(args.device); cam_loaded[0] = True
         return compute_sim(ref, tgt, args.device)

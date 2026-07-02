@@ -1,9 +1,8 @@
 #!/usr/bin/env python
-"""03: editx_base ⋈ vcdata_base on (input_audio == ref_audio)
+"""03: editx_base ⋈ vcdata_base on current local ref_audio
 
-用绝对路径做 key 才是真正的天然 join：editx 的 input_audio 就是 vcdata 产的 ref_audio。
-旧版用 source_row_index ⋈ original_idx 只在 zh demo（idx 顺序连号）下凑巧能命中，
-在英文 split_demo_en（vcdata original_idx 稀疏跳跃如 [0,1,2,3,48,49,...,1442]）只命中 12/100。
+优先用 `ref_audio` 关联，兼容本地重定位后的 ref 路径；
+如果是旧数据没有 `ref_audio` 字段，再回退到 `input_audio`。
 
 输出 joined_editx.jsonl，是 B/C/H2/D_st 类构造的统一输入。
 """
@@ -39,13 +38,15 @@ def main():
     def joined_rows():
         nonlocal n_miss
         for e in iter_jsonl(ed_path):
-            v = vc_index.get(e["input_audio"])
+            join_key = e.get("ref_audio") or e.get("input_audio")
+            v = vc_index.get(join_key)
             if v is None:
                 n_miss += 1; continue
             yield {
                 "sample_id": e["sample_id"],
                 "split": args.split,
                 "original_idx": v["original_idx"],
+                "edit_source_row_index": e.get("source_row_index"),
                 "original_audio": v["original_audio"],
                 "original_text": v["original_text"],
                 "ref_audio": v["ref_audio"],

@@ -11,19 +11,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _utils import (
     load_config, iter_jsonl, write_jsonl,
-    split_dir, intermediate_path, make_sample_id_vc,
+    split_dir, intermediate_path, make_sample_id_vc, prefer_local_ref_audio,
 )
 
 
-def normalize(row: dict, split: str) -> dict:
+def normalize(row: dict, split: str, sd: Path) -> dict:
     cap = row.get("caption_result") or {}
+    row_index = row["original_idx"]
     return {
-        "sample_id": make_sample_id_vc(split, row["original_idx"]),
+        "sample_id": make_sample_id_vc(split, row_index),
         "split": split,
-        "original_idx": row["original_idx"],
+        "original_idx": row_index,
         "original_audio": row["original_audio_path"],
         "original_text": row["original_text"],
-        "ref_audio": row["ref_audio_path"],
+        "ref_audio": prefer_local_ref_audio(sd, row_index, row["ref_audio_path"]),
         "ref_text": row["ref_text"],
         "speaker_similarity": row.get("best_similarity"),
         "flag": row.get("flag"),
@@ -56,7 +57,7 @@ def main():
         sys.exit(f"[01] 找不到 vcdata 合并 manifest: {src}\n  提示：split 是否已合并 shards？")
 
     out = intermediate_path(cfg, args.split, "vcdata_base.jsonl")
-    n = write_jsonl(out, (normalize(r, args.split) for r in iter_jsonl(src)))
+    n = write_jsonl(out, (normalize(r, args.split, sd) for r in iter_jsonl(src)))
     print(f"[01] vcdata_base.jsonl ← {src.name}  rows={n}  → {out}")
 
 

@@ -34,7 +34,7 @@
 | **D_cross_emo** | ref_audio（vcdata，情绪 X） | original_audio（真人，情绪 Y） | 不用 editx（仅 vcdata） | 跨情绪转换 —— 同 speaker（clone vs 真人）、跨情绪类别 |
 | **Genre** | ref_audio | edited_audio（风格转换） | zh: `[news, chat]` / en: `[news, radio]` | 风格 / 播报方式转换，同文本 |
 | **H1** | original_audio | ref_audio | A 的 emotion cosine 极高子集 | 零变化对照（"保持原样"） |
-| **H2** | edited_audio（已中性化） | 自身或中性近邻 | 中性化 tag | 已满足指令对照（"再中性一点"） |
+| **H2** | ref_audio（已较中性） | edited_audio（更中性） | 中性化 tag | 中性 -> 更中性对照 |
 | **H3** | 任一 A 的 ref | 跨行随机 ref | A 跨行重组 | 跨 speaker 负样本 |
 
 **中性化 tag 因语言而异**：中文用 `style_radio`（中性化效果最强），英文用 `style_chat`（英文模型上最强）。Genre 的白名单是补集 —— B/C/H2（需要中性化）和 Genre（不能从已中性出发）永远不会共享 tag。
@@ -69,13 +69,16 @@
    ┌────────┬────────┬─────┴────┬─────────┬─────────┬────────┐
    ▼        ▼        ▼          ▼         ▼         ▼        ▼
   05 A   06 B   07 C / 07b C_mixed   07c D / 07d D_st / 07f D_cross_emo
-  08 H1     09 H2     10 H3     07e Genre
+  08 H1     09 H2     10 H3     07e Genre / Genre_conv
                            │
                            ▼
-            11b add_wavlm_sim   （WavLM-L + ECAPA-TDNN 重打分，产出 *_filtered.jsonl）
+            11b add_wavlm_sim   （对全部 12 类 pair 做 WavLM-L + ECAPA-TDNN 重打分，写入 pairs/scored/*.jsonl）
                            │
                            ▼
             12 filter_dnsmos_bak （可选电音过滤）
+                           │
+                           ▼
+                13 qc_pairs （最终质量门，产出 quality_gate/）
                            │
                            ▼
                   outputs/<split>/pairs/*.jsonl
@@ -99,6 +102,21 @@
 ---
 
 ## 5. 快速开始
+
+### 5.0 统一入口
+
+如果你想把 `vcdata/edit` 放到启智跑、`pair` 放到本地跑，直接用：
+
+```bash
+cd /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction
+
+# 提交 vcdata + edit 到启智
+bash run_pipeline_interface.sh submit-qz
+
+# 上游跑完后，本地从指定 run_root 构造 pair
+bash run_pipeline_interface.sh pair-local zh zh_slim_0001 configs/default.yaml cuda:0 \
+  /path/to/run_root
+```
 
 ### 5.1 Smoke 测试（单卡单 split）
 
@@ -152,7 +170,7 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 | zh | 200 | 43 | 43 | 81 | 41 | 26 | 19 | 400 | 85 | 138 | 400 | 1476 |
 | en | 200 | 45 | 45 | 74 | 25 | 34 | 51 | 400 | 40 | 115 | 200 | 1429 |
 
-以上是 `_filtered` 之前的行数。WavLM-L speaker-sim 过滤后的数量见 `outputs/<split>/pairs/*_filtered.jsonl`。
+以上是最终 QC 之前的原始 pair 行数。最终通过 / 拒绝统计见 `outputs/<split>/quality_gate/summary.json`。
 
 ---
 
@@ -175,37 +193,20 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 | `genre.edit_tag_whitelist` | Genre 用哪些 tag（必须排除中性化 tag） |
 | `bc / d / d_st / c_mixed / d_cross_emo / genre.speaker_sim_min_wavlm` | 每类 WavLM-L 说话人相似度下限 |
 | `h1.cosine_min` | H1 "表达几乎不变" 阈值 |
-| `h2.mode` | `self`（同一中性 edited 两端复用）或 `neighbor`（配另一中性近邻） |
+| `h2.mode` | 默认 `ref_to_edited`；`self` / `neighbor` 仅保留给旧实验兼容 |
+| `h2.ref_neutral_min / h2.p_neutral_min / h2.target_more_neutral_margin` | H2 的 ref/tgt 中性阈值，以及“target 更中性”最小 margin |
 | `dnsmos_bak_filter.apply` | 是否打开可选的反电音过滤 |
 
-### 6.1 怎么判定"中性"（P_neutral 含义）
+## 6.1 实验性 prosody 路线
 
-**没有一个全局阈值**说"P_neutral 大于多少就是 neutral"。判定分两层：
+本仓库现在额外带了两条新的 pair 生成路线，入口在 `scripts/` 和 `configs/prosody_routes.yaml`。它们是增量接入，不会改动默认 `run_pairs_local.sh` 主链路。
 
-1. **硬条件** `top1_label == "neutral"` —— emotion2vec 九类里 neutral 是最大概率类
-2. **软条件** `P_neutral` —— neutral 类的具体概率值（0–1 连续）
-
-不同 pair 类用不同上下限，且语言不同阈值不同：
-
-| 阈值字段 | zh | en | 含义 |
-|---|---|---|---|
-| `bc.edited_neutral_min` | **0.7** | **0.3** | B/C 中性侧（edited_audio）**下限**：≥ 此值才算够中性 |
-| `bc.ref_neutral_max` | 0.95 | 0.95 | B/C 高表现侧（ref_audio）**上限**：≤ 此值才算真有表现力（否则太中性） |
-| `c_mixed.ref_neutral_max` | 0.95 | 0.95 | C_mixed 同上 |
-| `d.ref_neutral_max` / `tgt_neutral_max` | 0.95 | 0.95 | D 双侧都要有表现力（≤ 0.95） |
-| `d_st.*neutral_max` | 0.95 | 0.95 | D_st 同 D |
-| **`d_cross_emo.*neutral_max`** | **0.5** | **0.5** | 跨情绪要求**双侧极端非中性** |
-| `h2.p_neutral_min` | **0.9** | **0.5** | H2 reference 必须**高置信中性** |
-
-**为什么 zh/en 阈值不同**：emotion2vec 是中文母语模型。中文音频上分布锐利（一条中性化样本能轻松到 `P_neutral ≥ 0.9`），同样模型用到英文上分布扁平，最强中性化 tag（`style_chat`）也只能到 `P_neutral ≈ 0.3-0.5`。英文阈值整体**放宽**才能拿到样本。
-
-**例子**：一条 `P_neutral = 0.024` 的音频：
-- 模型几乎肯定它**不是中性**（只有 2.4% 是 neutral 类）
-- ❌ 不能进 B/C 中性侧（需要 ≥ 0.7 / 0.3）
-- ✅ 可以进 B/C 高表现侧（允许 ≤ 0.95）
-- ✅ 可以进 D / D_cross_emo 双侧（D 需 ≤ 0.95；D_cross_emo 需 ≤ 0.5）
-
-**独立信号 `sv_label`**：SenseVoice 是另一个独立情绪分类器。`bc.edited_sv_must_be_neutral` 可以强制两个模型共识，但目前全设为 false —— en 上两模型一致率只 ~10%，强同意会卡掉绝大多数样本。
+- `J_fast` / `J_slow`：`01_prepare_step_speed_jobs.py -> run_step_editx_local.py -> 02_collect_step_speed_pairs.py -> 03_add_prosody_metrics.py`，启动脚本是 `run_speed_pipeline.sh` 和 `run_zh_en_slim500_speed.sh`。
+- `I` (SeedVC prosody transfer)：`07_prepare_prosody_no_timbre_seedvc_jobs.py -> 08_run_seedvc_jobs.py -> 09_collect_seedvc_prosody_no_timbre_pairs.py -> 03_add_prosody_metrics.py`，启动脚本是 `run_seedvc_prosody_no_timbre_slim500.sh`。
+- `run_run03_prosody_speed_pairs.sh` 可以把这些可选类别写入标准 split 的 `pairs/` 目录。开启 QC 时，会先运行 `04c_add_pair_audio_metrics.py`，补评新生成音频缺失的 emotion/SenseVoice/DNSMOS 指标并合并回 `emotion/per_file_dual.csv`。
+- 启智批量提交/runner 中，`RUN_IJ_ON_QZ` 现在默认是 `1`，因此常规 pair/QC 之后会默认继续跑 I/J。只有明确要跳过 I/J 时才传 `RUN_IJ_ON_QZ=0`。
+- 配套说明文档在 [docs/prosody_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_routes.md) 和 [docs/prosody_no_timbre_model_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_no_timbre_model_routes.md)。
+- 旧的 DSP 版 prosody-no-timbre 原型这次不再同步到本仓库。
 
 ---
 
@@ -234,6 +235,12 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
   "meta": { "split": "...", "source_row_index": 123 }
 }
 ```
+
+QC 输出使用带 ref/tgt 前缀的标准指标字段，例如 `ref_top1`/`tgt_top1`
+（短别名）、`ref_top1_label`、`tgt_top1_label`、`ref_p_neutral`、
+`tgt_p_neutral`、`ref_sv_label`、`tgt_sv_label`、`ref_dnsmos_ovrl`、
+`tgt_dnsmos_ovrl`、`ref_dnsmos_sig`、`tgt_dnsmos_sig`、`ref_dnsmos_bak`、
+`tgt_dnsmos_bak`。
 
 ---
 
@@ -278,58 +285,7 @@ pair_construction/
 
 ---
 
-## 9. Web 看板（Streamlit）
-
-`app/` 下有一个 3 页 Streamlit 应用，浏览 pair 数据、监控增长、对比数据源。
-
-```
-app/
-├── app.py                       # 入口
-├── index_builder.py             # 扫 outputs/<split>/pairs/*.jsonl → index.parquet
-├── raw_scanner.py               # 扫上游 raw split_*.jsonl → raw_source.parquet + duration_cache.parquet
-├── loader.py                    # 共享缓存加载器
-├── start.sh                     # 启动脚本（用 kxhuang tts env）
-└── pages/
-    ├── 1_📊_Dashboard.py        # KPI 卡片 / source-lang-type 分布 / 留存率
-    ├── 2_🔍_Browser.py          # 多维过滤 / 单 pair 详情 + 音频对比
-    └── 3_📈_Source_compare.py   # 多数据源横向对比（每加一个新源就有一列）
-```
-
-### 建索引 + 启动（在 GPU 服务器上）
-
-```bash
-# 1) 先把 pair 侧聚合
-python app/index_builder.py
-
-# 2) 再扫上游 raw（得到"总小时数" + duration 缓存）
-python app/raw_scanner.py \
-  --add instruction_0.1_enzh:zh:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/zh \
-  --add instruction_0.1_enzh:en:/inspire/.../kxhuang/instructtts_data/instruction_0.1_enzh/en
-
-# 3) 再跑一次 index_builder，让 pair 索引拿到 duration → 算出 per-split 小时数
-python app/index_builder.py
-
-# 4) 启动
-bash app/start.sh        # 默认端口 8501
-```
-
-### 本机浏览器访问（SSH 端口转发）
-
-```bash
-# 本机另开 terminal
-ssh -L 8501:localhost:8501 <gpu_host>
-# 浏览器打开 http://localhost:8501
-```
-
-### Browser 页支持的交叉过滤维度
-
-source / language / split / pair_type / is_filtered / source_edit_tag /
-ref_emotion.top1 / tgt_emotion.top1 / sim_wavlm 范围 / ref_dnsmos_bak 范围 /
-tgt_dnsmos_bak 范围 / instruction 关键词 / ref+tgt 文本关键词。
-
----
-
-## 10. 本项目不做什么
+## 9. 本项目不做什么
 
 - 不重训任何模型（MOSS-TTS、EditX、emotion2vec、SenseVoice、WavLM-L）
 - 不重新生成任何上游音频

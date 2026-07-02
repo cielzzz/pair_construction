@@ -23,13 +23,23 @@ def _load_session(onnx_path: str):
     if _SESSION is not None:
         return _SESSION, _INPUT_NAME
     import onnxruntime as ort
+    sess_options = ort.SessionOptions()
+    threads = os.environ.get("DNSMOS_ORT_THREADS") or os.environ.get("ORT_INTRA_OP_NUM_THREADS")
+    if threads:
+        try:
+            n_threads = int(threads)
+            if n_threads > 0:
+                sess_options.intra_op_num_threads = n_threads
+                sess_options.inter_op_num_threads = 1
+        except ValueError:
+            pass
     providers = []
     try:
         providers.append("CUDAExecutionProvider")
     except Exception:
         pass
     providers.append("CPUExecutionProvider")
-    _SESSION = ort.InferenceSession(onnx_path, providers=providers)
+    _SESSION = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=providers)
     _INPUT_NAME = _SESSION.get_inputs()[0].name
     return _SESSION, _INPUT_NAME
 

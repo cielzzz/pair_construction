@@ -15,17 +15,35 @@ from typing import Optional
 
 NINE_CLASSES = ["angry", "disgusted", "fearful", "happy", "neutral",
                 "other", "sad", "surprised", "unk"]
+NUMERIC_FIELDS = NINE_CLASSES + [
+    "neutral_score",
+    "non_neutral_score",
+    "non_neutral",
+    "top1_prob",
+    "sv_is_neutral",
+    "dnsmos_ovrl",
+    "dnsmos_sig",
+    "dnsmos_bak",
+]
+SV_LABELS = set(NINE_CLASSES) - {"unk"}
 
 
 class EmotionTable:
     def __init__(self):
         self._by_path: dict[str, dict] = {}
+        self._register_realpath = os.environ.get("EMOTION_LOOKUP_REALPATH", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
 
     # --- 通用记录注册 ----------------------------------------------------
     def _register(self, path: str, rec: dict) -> None:
         if not path:
             return
         self._by_path[path] = rec
+        if not self._register_realpath:
+            return
         try:
             real = os.path.realpath(path)
             if real != path:
@@ -42,15 +60,22 @@ class EmotionTable:
             reader = csv.DictReader(f)
             for row in reader:
                 rec = dict(row)
-                for k in NINE_CLASSES + ["neutral_score", "non_neutral_score",
-                                         "non_neutral", "top1_prob"]:
+                for k in NUMERIC_FIELDS:
                     if k in rec and rec[k] not in ("", None):
                         try:
                             rec[k] = float(rec[k])
                         except ValueError:
                             pass
-                p = rec.get("wav") or rec.get("path")
-                self._register(p, rec)
+                for p in (
+                    rec.get("wav") or rec.get("path"),
+                    rec.get("source_audio"),
+                    rec.get("audio_path"),
+                    rec.get("target_audio"),
+                    rec.get("original_audio"),
+                    rec.get("edited_audio"),
+                    rec.get("audio"),
+                ):
+                    self._register(p, rec)
                 n += 1
         return n
 
@@ -63,15 +88,29 @@ class EmotionTable:
             reader = csv.DictReader(f)
             for row in reader:
                 link = row.get("link_wav")
-                orig = row.get("original_audio")
-                if not link or not orig:
+                target = (
+                    row.get("original_audio")
+                    or row.get("edited_audio")
+                    or row.get("target_audio")
+                    or row.get("audio_path")
+                    or row.get("audio")
+                )
+                if not link or not target:
                     continue
                 rec = self._by_path.get(link)
                 if rec is None:
                     continue
-                self._register(orig, rec)
+                self._register(target, rec)
                 n += 1
         return n
+
+    def load_all_link_mappings(self, emotion_root: Path) -> int:
+        if not emotion_root.exists():
+            return 0
+        total = 0
+        for csv_path in sorted(emotion_root.glob("_links*/_mapping.csv")):
+            total += self.load_link_mapping(csv_path)
+        return total
 
     # --- 加载 per_pair.csv，把 src 注册成简化记录 ----------------------
     def load_per_pair_for_src(self, csv_path: Path) -> int:
@@ -111,6 +150,8 @@ class EmotionTable:
         rec = self._by_path.get(audio_path)
         if rec:
             return rec
+        if not self._register_realpath:
+            return None
         try:
             return self._by_path.get(os.path.realpath(audio_path))
         except OSError:
@@ -134,26 +175,38 @@ class EmotionTable:
         if rec is None:
             return {"top1_label": None, "top1_prob": None,
                     "P_neutral": None, "sv_label": None,
-                    "dnsmos_ovrl": None}
+                    "dnsmos_ovrl": None, "dnsmos_sig": None,
+                    "dnsmos_bak": None}
         return {
             "top1_label": rec.get("top1_label"),
-            "top1_prob": _safe_float(rec.get("top1_prob")),
-            "P_neutral": _safe_float(rec.get("neutral")),
-            "sv_label": rec.get("sv_label"),
-            "dnsmos_ovrl": _safe_float(rec.get("dnsmos_ovrl")) if rec.get("dnsmos_ovrl") not in ("", None) else None,
+            "top1_prob": _optional_float(rec.get("top1_prob")),
+            "P_neutral": _optional_float(rec.get("neutral")),
+            "sv_label": _sensevoice_label(rec),
+            "dnsmos_ovrl": _optional_float(rec.get("dnsmos_ovrl")),
+            "dnsmos_sig": _optional_float(rec.get("dnsmos_sig")),
+            "dnsmos_bak": _optional_float(rec.get("dnsmos_bak")),
         }
 
-    def dnsmos_ovrl(self, audio_path: str):
+    def dnsmos_value(self, audio_path: str, key: str):
         rec = self.get(audio_path)
         if rec is None:
             return None
-        v = rec.get("dnsmos_ovrl")
+        v = rec.get(key)
         if v in ("", None):
             return None
         try:
             return float(v)
         except (TypeError, ValueError):
             return None
+
+    def dnsmos_ovrl(self, audio_path: str):
+        return self.dnsmos_value(audio_path, "dnsmos_ovrl")
+
+    def dnsmos_sig(self, audio_path: str):
+        return self.dnsmos_value(audio_path, "dnsmos_sig")
+
+    def dnsmos_bak(self, audio_path: str):
+        return self.dnsmos_value(audio_path, "dnsmos_bak")
 
 
 def _safe_float(x) -> float:
@@ -163,3 +216,26 @@ def _safe_float(x) -> float:
         return float(x)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_float(x) -> float | None:
+    if x is None or x == "":
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sensevoice_label(rec: dict) -> str | None:
+    label = rec.get("sv_label")
+    if isinstance(label, str) and label.strip():
+        return label.strip().lower()
+    raw = rec.get("sv_raw")
+    if not isinstance(raw, str):
+        return None
+    for token in raw.split("<|"):
+        tag = token.split("|>", 1)[0].strip().lower()
+        if tag in SV_LABELS:
+            return tag
+    return None

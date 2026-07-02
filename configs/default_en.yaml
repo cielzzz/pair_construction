@@ -1,7 +1,7 @@
 paths:
-  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/vcdata_construction/outputs/instruction_0.1_enzh/en
+  vcdata_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs/delivery_filter_10k_qz_20260604/vcdata/en
   emotion_eval_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/emotion_eval
-  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs
+  outputs_root: /inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/outputs/delivery_filter_10k_qz_20260604/pairs/en
 editx:
   edit_tags:
   - style_chat
@@ -15,6 +15,7 @@ emotion_filter:
   - unk
 a:
   sim_min: 0.0
+  speaker_sim_min_wavlm: 0.55
   require_flag_ok: false
   instruction: Keep the reference voice, only change the text, keep the expression
     unchanged
@@ -58,14 +59,21 @@ d:
   speaker_sim_min_wavlm: 0.4
 h1:
   sim_min: 0.0
+  speaker_sim_min_wavlm: 0.55
   cosine_min: 0.95
   same_top1_label: true
   instruction: Keep the original expression, do not change the speaking style
 h2:
   source_edit_tag: style_chat
+  speaker_sim_min_wavlm: 0.55
+  ref_neutral_min: 0.5
   p_neutral_min: 0.5
   require_sv_neutral: false
-  mode: self
+  ref_top1_must_be_neutral: true
+  edited_top1_must_be_neutral: true
+  require_target_more_neutral: true
+  target_more_neutral_margin: 0.0
+  mode: ref_to_edited
   instruction_pool:
   - Speak more neutrally
   - Remove the emotional fluctuation
@@ -79,6 +87,18 @@ h3:
   - Generate new content per the instruction, do not copy the reference audio text
   - Use the reference timbre and style to speak the given text, ignore the reference
     content
+i:
+  timbre_speaker_sim_min_wavlm: 0.55
+  duration_ratio_min: 0.85
+  duration_ratio_max: 1.15
+  pause_pattern_jaccard_min: 0.3
+  energy_contour_corr_min: 0.4
+j_fast:
+  speaker_sim_min_wavlm: 0.55
+  require_speed_direction_pass: true
+j_slow:
+  speaker_sim_min_wavlm: 0.55
+  require_speed_direction_pass: true
 output:
   jsonl_indent: null
 d_st:
@@ -106,6 +126,8 @@ genre:
   - Read this in the style of {tgt_genre}, keeping the same voice
   - Convert to {tgt_genre} delivery while preserving the speaker timbre
   - Keep the speaker, switch to {tgt_genre} style
+genre_conv:
+  speaker_sim_min_wavlm: 0.55
 d_cross_emo:
   speaker_sim_min_wavlm: 0.4
   ref_top1_not_neutral: true

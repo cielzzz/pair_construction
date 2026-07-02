@@ -44,7 +44,7 @@ def main():
     emo = EmotionTable()
     emo.load_csv(emotion_path(cfg, args.split, "per_file_dual.csv"))
     emo.load_per_pair_for_src(emotion_path(cfg, args.split, "per_pair.csv"))
-    emo.load_link_mapping(emotion_path(cfg, args.split, "_links_original/_mapping.csv"))
+    emo.load_all_link_mappings(emotion_path(cfg, args.split, ""))
 
     dce = cfg["d_cross_emo"]
     forbidden_emo_labels = set(cfg.get("emotion_filter", {}).get("forbidden_top1_labels", []))

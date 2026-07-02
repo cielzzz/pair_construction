@@ -3,6 +3,13 @@ outputs/
 outputs_*/
 .qz_editx_batches/
 .qz_split_batches/
+.qz_vcdata_editx_batches/
+.qz_vcdata_editx_inputs/
+.qz_editx_ablation_probes/
+.prepared_inputs/
+.vcdata_probe_inputs/
+.multispeaker_probe/
+.hf_cache/
 .cache/
 
 # 第三方仓库 / 模型权重 / 虚拟环境
@@ -44,3 +51,12 @@ docs/
 
 # Streamlit app 索引产物（per host 重建）
 app/data/*.parquet
+app/data/
+app/streamlit.log
+
+# Local generated audio and baseline artifacts
+qwen_tts_neutral/outputs/
+qwen_tts_neutral/outputs_customvoice/
+tts_baselines/**/outputs/
+tts_baselines/**/outputs_fair/
+tts_baselines/_dnsmos/

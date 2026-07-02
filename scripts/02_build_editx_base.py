@@ -16,34 +16,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _utils import (
     load_config, iter_jsonl, write_jsonl,
     split_dir, split_idx_of, intermediate_path, make_sample_id_editx,
+    prefer_local_ref_audio, prefer_local_edit_audio,
 )
 
 
-def normalize(row: dict, split: str, edit_tag: str) -> dict:
+def normalize(row: dict, split: str, edit_tag: str, sd: Path) -> dict:
     md = row.get("metadata") or {}
     os_blk = row.get("one_stage") or {}
+    edit_row_index = md["source_row_index"]
+    ref_row_index = md.get("original_idx", edit_row_index)
+    actual_edit_tag = md.get("edit_tag", edit_tag)
+    ref_audio = prefer_local_ref_audio(sd, ref_row_index, row.get("audio1") or md.get("source_ref_audio_path"))
     return {
-        "sample_id": make_sample_id_editx(split, edit_tag, md["source_row_index"]),
+        "sample_id": make_sample_id_editx(split, edit_tag, edit_row_index),
         "split": split,
-        "source_row_index": md["source_row_index"],
+        "source_row_index": edit_row_index,
+        "original_idx": ref_row_index,
         "job_id": row.get("job_id"),
-        "edit_tag": md.get("edit_tag", edit_tag),
+        "edit_tag": actual_edit_tag,
         "edit_type": md.get("edit_type"),
         "edit_info": md.get("edit_info"),
         "instruction": row.get("instruction") or os_blk.get("prompt"),
-        "input_audio": row.get("audio1"),
+        "input_audio": ref_audio,
         "input_text": row.get("text1"),
-        "edited_audio": os_blk.get("audio2"),
+        "edited_audio": prefer_local_edit_audio(sd, split, actual_edit_tag, edit_row_index, os_blk.get("audio2")),
         "edited_text": row.get("text2"),
         "original_audio_from_meta": md.get("original_audio_path"),
         "best_similarity_from_meta": md.get("best_similarity"),
         "model": md.get("model"),
+        "ref_audio": ref_audio,
+        "ref_text": row.get("text1"),
     }
 
 
 def iter_one_tag(cfg: dict, split: str, edit_tag: str) -> Iterator[dict]:
     sd = split_dir(cfg, split)
-    # 先尝试模板路径（要求 split_NNNN 数字格式 + yaml 配 paired_report_template）
+    # 先尝试模板路径（要求 split_NNNN 数字格式）
     pr = None
     try:
         idx = split_idx_of(split)
@@ -51,9 +59,7 @@ def iter_one_tag(cfg: dict, split: str, edit_tag: str) -> Iterator[dict]:
         cand = sd / rel
         if cand.exists():
             pr = cand
-    except (ValueError, KeyError):
-        # ValueError: split 名非 split_NNNN（如 smoke_*） → 跳模板，走 glob
-        # KeyError: yaml 没配 paired_report_template → 跳模板，走 glob
+    except ValueError:
         pass
     # fallback：glob 任何 stepaudio_<edit_tag>_<split>_*/paired_report.jsonl
     if pr is None:
@@ -66,7 +72,7 @@ def iter_one_tag(cfg: dict, split: str, edit_tag: str) -> Iterator[dict]:
     cnt = 0
     for r in iter_jsonl(pr):
         try:
-            yield normalize(r, split, edit_tag)
+            yield normalize(r, split, edit_tag, sd)
             cnt += 1
         except KeyError as e:
             print(f"[02] [warn] {edit_tag} row missing {e}: skip", file=sys.stderr)

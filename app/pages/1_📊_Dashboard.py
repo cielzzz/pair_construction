@@ -236,29 +236,109 @@ if not raw.empty:
 # ════════ 过滤留存（11b WavLM sim） ════════
 if not idx.empty:
     st.subheader("🎯 过滤留存率（11b WavLM-L sim）")
-    filt = idx.pivot_table(index=["display_split", "pair_type"],
-                           columns="is_filtered", values="n_pairs", fill_value=0).reset_index()
-    filt.columns = ["split", "pair_type", "orig", "filtered"]
-    filt = filt[filt["filtered"] > 0].copy()
-    filt["retain_pct"] = (filt["filtered"] / filt["orig"] * 100).round(1)
+    # 兼容三种数据形态：
+    #   (a) 同时有 orig 和 filtered — 老 pipeline
+    #   (b) 只有 orig（is_filtered 列全 False）— 新 infra 流水线已内嵌过滤
+    #   (c) 只有 filtered — 极端情况
+    piv = idx.pivot_table(index=["display_split", "pair_type"],
+                          columns="is_filtered", values="n_pairs", fill_value=0)
+    # ⚠️ 关键：pivot 出来列名是 bool（False/True），任何用 [False, True] 做列选的写法都会被
+    # pandas 误判成 bool mask。先 rename 成字符串再操作。
+    piv = piv.rename(columns={False: "orig", True: "filtered"})
+    if "orig" not in piv.columns:
+        piv["orig"] = 0
+    if "filtered" not in piv.columns:
+        piv["filtered"] = 0
+    piv = piv[["orig", "filtered"]].reset_index()
+    piv = piv.rename(columns={"display_split": "split"})
 
-    # 按类型聚合的留存率
-    type_retain = (filt.groupby("pair_type", as_index=False)
-                       .agg(orig=("orig", "sum"), filtered=("filtered", "sum")))
-    type_retain["retain_pct"] = (type_retain["filtered"] / type_retain["orig"] * 100).round(1)
-    type_retain = type_retain.sort_values("retain_pct", ascending=False)
+    if (piv["filtered"] == 0).all():
+        st.info("当前索引里只有 orig 数据（没有 `*_filtered.jsonl`），新 infra 流水线已把过滤内嵌到 scored 输出，所以这里不展示留存率。")
+    else:
+        filt = piv[piv["filtered"] > 0].copy()
+        filt["retain_pct"] = (filt["filtered"] / filt["orig"] * 100).round(1)
 
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        fig = px.bar(type_retain, x="pair_type", y="retain_pct",
-                     color="retain_pct",
-                     color_continuous_scale=[[0, "#f87171"], [0.5, "#fbbf24"], [1, ACCENT]],
-                     title="各 pair_type 留存率（%）")
-        fig.update_layout(height=340, xaxis_title=None, yaxis_title="留存率 %",
-                          coloraxis_showscale=False)
-        fig.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
-        st.plotly_chart(fig, use_container_width=True)
-    with c2:
-        st.markdown("**各 (split, pair_type) 留存详表**")
-        st.dataframe(filt.sort_values(["split", "pair_type"]),
-                     use_container_width=True, hide_index=True, height=340)
+        # 按类型聚合的留存率
+        type_retain = (filt.groupby("pair_type", as_index=False)
+                           .agg(orig=("orig", "sum"), filtered=("filtered", "sum")))
+        type_retain["retain_pct"] = (type_retain["filtered"] / type_retain["orig"] * 100).round(1)
+        type_retain = type_retain.sort_values("retain_pct", ascending=False)
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            fig = px.bar(type_retain, x="pair_type", y="retain_pct",
+                         color="retain_pct",
+                         color_continuous_scale=[[0, "#f87171"], [0.5, "#fbbf24"], [1, ACCENT]],
+                         title="各 pair_type 留存率（%）")
+            fig.update_layout(height=340, xaxis_title=None, yaxis_title="留存率 %",
+                              coloraxis_showscale=False)
+            fig.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.markdown("**各 (split, pair_type) 留存详表**")
+            st.dataframe(filt.sort_values(["split", "pair_type"]),
+                         use_container_width=True, hide_index=True, height=340)
+
+
+# ════════ I 类 timbre_sim 分布 ════════
+if not idx.empty:
+    # 只看 quality_gate 档（is_filtered=True）下的 I 类，且有 timbre_sim 数据
+    i_idx = idx[(idx["pair_type"] == "I") & (idx["is_filtered"] == True)].copy()
+    has_timbre = "timbre_sim_wavlm_p50" in i_idx.columns and i_idx["timbre_sim_wavlm_p50"].notna().any()
+    if has_timbre:
+        st.divider()
+        st.subheader("🎭 I 类 timbre_sim 分布（target ↔ timbre_ref，WavLM-L）")
+        st.caption("I 类用 timbre_ref 的音色 + reference 的韵律。该 sim 越高说明音色迁移越成功。")
+
+        # 整体聚合（多 split 合并）
+        i_filtered_idx = i_idx[i_idx["timbre_sim_wavlm_p50"].notna()]
+        if not i_filtered_idx.empty:
+            # 按 n_pairs 加权平均（粗略，没真做合并 quantile 那么精确，但够用）
+            weights = i_filtered_idx["n_pairs"]
+            overall_mean = (i_filtered_idx["timbre_sim_wavlm_mean"] * weights).sum() / weights.sum()
+            overall_p25 = (i_filtered_idx["timbre_sim_wavlm_p25"] * weights).sum() / weights.sum()
+            overall_p50 = (i_filtered_idx["timbre_sim_wavlm_p50"] * weights).sum() / weights.sum()
+            overall_p75 = (i_filtered_idx["timbre_sim_wavlm_p75"] * weights).sum() / weights.sum()
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            with mc1: st.metric("mean", f"{overall_mean:.3f}")
+            with mc2: st.metric("P25", f"{overall_p25:.3f}")
+            with mc3: st.metric("P50 (中位)", f"{overall_p50:.3f}")
+            with mc4: st.metric("P75", f"{overall_p75:.3f}")
+
+            # per-split 比较
+            c1, c2 = st.columns([1.2, 1])
+            with c1:
+                bar = i_filtered_idx[["display_split", "language",
+                                      "timbre_sim_wavlm_p25",
+                                      "timbre_sim_wavlm_p50",
+                                      "timbre_sim_wavlm_p75",
+                                      "n_pairs"]].copy()
+                melt = bar.melt(id_vars=["display_split", "language", "n_pairs"],
+                                value_vars=["timbre_sim_wavlm_p25",
+                                            "timbre_sim_wavlm_p50",
+                                            "timbre_sim_wavlm_p75"],
+                                var_name="quantile", value_name="timbre_sim")
+                melt["quantile"] = melt["quantile"].str.replace("timbre_sim_wavlm_", "", regex=False).str.upper()
+                fig = px.bar(melt, x="display_split", y="timbre_sim",
+                             color="quantile", barmode="group",
+                             color_discrete_sequence=[ACCENT_2, ACCENT, "#a78bfa"],
+                             title="per-split timbre_sim 分位数")
+                fig.update_layout(height=340, xaxis_title=None,
+                                  yaxis_title="WavLM-L cos sim",
+                                  yaxis=dict(range=[0, 1]))
+                fig.update_traces(texttemplate="%{y:.2f}", textposition="outside")
+                st.plotly_chart(fig, use_container_width=True)
+            with c2:
+                show = i_filtered_idx[["display_split", "language", "n_pairs",
+                                       "timbre_sim_wavlm_mean",
+                                       "timbre_sim_wavlm_p25",
+                                       "timbre_sim_wavlm_p50",
+                                       "timbre_sim_wavlm_p75"]].rename(columns={
+                    "display_split": "split",
+                    "timbre_sim_wavlm_mean": "mean",
+                    "timbre_sim_wavlm_p25": "P25",
+                    "timbre_sim_wavlm_p50": "P50",
+                    "timbre_sim_wavlm_p75": "P75",
+                }).round(3)
+                st.dataframe(show, use_container_width=True, hide_index=True, height=340)

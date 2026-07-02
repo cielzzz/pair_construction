@@ -151,8 +151,19 @@ def load_pair_jsonl(jsonl_path: str, max_rows: int = 5000) -> pd.DataFrame:
             if i >= max_rows:
                 break
             r = json.loads(line)
+            # 兼容两种 schema：
+            #   A) pairs/X.jsonl 把 emotion / dnsmos_ovrl 嵌套在 ref_emotion / tgt_emotion 字典里
+            #   B) quality_gate/X_qc.jsonl 把所有字段平铺到 top-level（ref_top1_label / ref_p_neutral / ...）
+            # 一律先读 top-level，再 fall back 到嵌套字典
             ref_emo = r.get("ref_emotion") or {}
             tgt_emo = r.get("tgt_emotion") or {}
+
+            def _pick(*candidates):
+                for v in candidates:
+                    if v is not None:
+                        return v
+                return None
+
             rows.append({
                 "pair_id": r.get("pair_id"),
                 "pair_type": r.get("pair_type"),
@@ -160,19 +171,29 @@ def load_pair_jsonl(jsonl_path: str, max_rows: int = 5000) -> pd.DataFrame:
                 "reference_text": r.get("reference_text", ""),
                 "target_audio": r.get("target_audio"),
                 "target_text": r.get("target_text", ""),
+                # I 类（韵律+音色拆分）专用：prosody 与 timbre 参考
+                "prosody_ref_audio": r.get("prosody_ref_audio"),
+                "prosody_ref_text": r.get("prosody_ref_text", ""),
+                "timbre_ref_audio": r.get("timbre_ref_audio"),
+                "timbre_ref_text": r.get("timbre_ref_text", ""),
                 "instruction": r.get("instruction", ""),
                 "source_edit_tag": r.get("source_edit_tag") or r.get("source_edit"),
-                "ref_emo_top1": ref_emo.get("top1_label"),
-                "ref_emo_p_neu": ref_emo.get("P_neutral"),
-                "ref_sv_label": ref_emo.get("sv_label"),
-                "ref_dnsmos_ovrl": ref_emo.get("dnsmos_ovrl"),
-                "tgt_emo_top1": tgt_emo.get("top1_label"),
-                "tgt_emo_p_neu": tgt_emo.get("P_neutral"),
-                "tgt_sv_label": tgt_emo.get("sv_label"),
-                "tgt_dnsmos_ovrl": tgt_emo.get("dnsmos_ovrl"),
-                "sim_wavlm": r.get("ref_vs_tgt_speaker_sim_wavlm"),
+                "ref_emo_top1":   _pick(r.get("ref_top1_label"), r.get("ref_top1"),   ref_emo.get("top1_label")),
+                "ref_emo_p_neu":  _pick(r.get("ref_p_neutral"),                       ref_emo.get("P_neutral")),
+                "ref_sv_label":   _pick(r.get("ref_sv_label"),                        ref_emo.get("sv_label")),
+                "ref_dnsmos_ovrl":_pick(r.get("ref_dnsmos_ovrl"),                     ref_emo.get("dnsmos_ovrl")),
+                "tgt_emo_top1":   _pick(r.get("tgt_top1_label"), r.get("tgt_top1"),   tgt_emo.get("top1_label")),
+                "tgt_emo_p_neu":  _pick(r.get("tgt_p_neutral"),                       tgt_emo.get("P_neutral")),
+                "tgt_sv_label":   _pick(r.get("tgt_sv_label"),                        tgt_emo.get("sv_label")),
+                "tgt_dnsmos_ovrl":_pick(r.get("tgt_dnsmos_ovrl"),                     tgt_emo.get("dnsmos_ovrl")),
+                # I 类 qc 阶段会写 timbre_ref_vs_tgt_speaker_sim_wavlm（音色相似度）
+                "sim_wavlm": _pick(r.get("ref_vs_tgt_speaker_sim_wavlm"), r.get("ref_speaker_sim_wavlm")),
+                "timbre_sim_wavlm": r.get("timbre_ref_vs_tgt_speaker_sim_wavlm"),
                 "ref_dnsmos_bak": r.get("ref_dnsmos_bak"),
                 "tgt_dnsmos_bak": r.get("tgt_dnsmos_bak"),
+                # 额外：qc 文件里还有 dnsmos_sig，老 schema 没有
+                "ref_dnsmos_sig": r.get("ref_dnsmos_sig"),
+                "tgt_dnsmos_sig": r.get("tgt_dnsmos_sig"),
                 "meta_split": (r.get("meta") or {}).get("split"),
                 "_raw": r,  # 保留完整原始 dict 供 detail view
             })
