@@ -2,7 +2,7 @@
 
 # pair_construction
 
-> A **read-only upstream, produce pairs** pipeline that turns voice-cloning + voice-editing outputs into 11 categories of `(reference_audio, instruction, target_audio)` training pairs for instruction-conditioned TTS.
+> A **read-only upstream, produce pairs** pipeline that turns voice-cloning + voice-editing outputs into 12 mainline categories plus the I/J prosody categories of `(reference_audio, instruction, target_audio)` training pairs for instruction-conditioned TTS.
 
 This project does **not** train models, does **not** generate any new audio, and does **not** modify upstream artifacts. It only reads, normalizes, joins, filters and emits jsonl.
 
@@ -17,11 +17,11 @@ Upstream provides two such axes for free:
 - **`vcdata_construction/`** — MOSS-TTS clones a reference speaker into many alternative renderings (different text, same voice).
 - **`vc_edit/`** — StepFun EditX applies style / emotion edits to a reference audio (same voice, different delivery).
 
-This repo joins those two streams, attaches emotion scores, and emits 11 categories of pairs covering: neutralization, re-energization, style conversion, cross-emotion conversion, identity controls, and cross-speaker negatives — all conditioned on natural-language instructions.
+This repo joins those two streams, attaches emotion scores, and emits 15 supported pair output names covering: neutralization, re-energization, style conversion, cross-emotion conversion, identity controls, cross-speaker negatives, prosody transfer, and speed control — all conditioned on natural-language instructions.
 
 ---
 
-## 2. Pair categories (11 types)
+## 2. Pair categories
 
 | Type | reference | target | edit source | Purpose |
 |---|---|---|---|---|
@@ -33,11 +33,17 @@ This repo joins those two streams, attaches emotion scores, and emits 11 categor
 | **D_st** | ref_audio (expressive) | edited_audio (expressive) | same as D, same text | Same emotion, same text (EditX side-output subset) |
 | **D_cross_emo** | ref_audio (vcdata, emotion X) | original_audio (real human, emotion Y) | n/a (vcdata only) | Cross-emotion conversion — same speaker (clone vs real) but different emotion category |
 | **Genre** | ref_audio | edited_audio (genre-converted) | zh: `[news, chat]` / en: `[news, radio]` | Genre / delivery-style conversion, same text |
+| **Genre_conv** | edited_audio (genre A) | edited_audio (genre B) | paired EditX genre tags | Genre A -> genre B conversion, same speaker and same text |
 | **H1** | original_audio | ref_audio | A subset with high emotion-cosine | Zero-change control ("keep as-is") |
 | **H2** | ref_audio (already neutral) | edited_audio (more neutral) | neutralizer tag | Neutral -> more neutral control |
 | **H3** | any A reference | random cross-row reference | A with cross-row shuffle | Cross-speaker negative |
+| **I** | prosody_ref_audio (also aliased as reference_audio) | SeedVC output using timbre_ref_audio voice | SeedVC prosody transfer | Preserve the prosody reference's speech rate, pauses, rhythm, emphasis, and intonation while using the timbre reference speaker |
+| **J_fast** | original/reference audio | Step-Audio-EditX speed edit | `speed_faster` / `speed_more_faster` | Same speaker and same text, faster speech |
+| **J_slow** | original/reference audio | Step-Audio-EditX speed edit | `speed_slower` / `speed_more_slower` | Same speaker and same text, slower speech |
 
 The **neutralizing edit tag differs by language**: `style_radio` is the strongest neutralizer for Chinese; `style_chat` is the strongest for English. Genre's whitelist is the complement set, so B/C/H2 (which need a neutralizer) and Genre (which should not start from already-neutral) never share a tag.
+
+`I`, `J_fast`, and `J_slow` are the I/J prosody categories. They are generated after the regular pair/QC stage by `scripts/run_run03_prosody_speed_pairs.sh`, share the same scoring/QC infrastructure, and are included by default in the Qizhi runner via `RUN_IJ_ON_QZ=1`.
 
 ---
 
@@ -72,7 +78,7 @@ The **neutralizing edit tag differs by language**: `style_radio` is the stronges
   08 H1     09 H2     10 H3     07e Genre / Genre_conv
                            │
                            ▼
-            11b add_wavlm_sim   (WavLM-L + ECAPA-TDNN re-score for all 12 pair types, writes pairs/scored/*.jsonl)
+            11b add_wavlm_sim   (WavLM-L + ECAPA-TDNN re-score for supported pair types, writes pairs/scored/*.jsonl)
                            │
                            ▼
             12 filter_dnsmos_bak (anti-electronic-tone, optional apply)
@@ -82,6 +88,15 @@ The **neutralizing edit tag differs by language**: `style_radio` is the stronges
                            │
                            ▼
                   outputs/<split>/pairs/*.jsonl
+```
+
+The I/J branch runs after the regular pair stage when enabled:
+
+```
+source manifest
+   ├── J_fast / J_slow: prepare Step-Audio-EditX speed jobs -> collect speed pairs -> add prosody metrics
+   └── I: prepare SeedVC prosody-transfer jobs -> run SeedVC -> collect I pairs -> add prosody metrics
+        -> add generated-audio metrics -> add WavLM speaker similarity -> qc_pairs
 ```
 
 ---
@@ -135,6 +150,7 @@ $EMOPY scripts/03_join_editx_with_vcdata.py --split $SPLIT
 bash   scripts/04_run_emotion_eval.sh $SPLIT cuda:0
 for s in 05_construct_A 06_construct_B 07_construct_C 07b_construct_C_mixed \
          07c_construct_D 07d_construct_D_st 07e_construct_genre 07f_construct_D_cross_emo \
+         07e_construct_genre_conv \
          08_construct_H1 09_construct_H2 10_construct_H3; do
     $EMOPY scripts/${s}.py --split $SPLIT
 done
@@ -174,6 +190,24 @@ Last verified end-to-end run on 200 sentences:
 
 Numbers above are raw pair counts before the final QC gate. Final accepted / rejected counts are written to `outputs/<split>/quality_gate/summary.json`.
 
+### 5.4 Verified I/J validation results
+
+Latest completed I/J validation run:
+
+```text
+outputs/mtd_pass_nonmulti_primary_le_0p3_zh0004_en0004_ij_qz_20260621_run01
+```
+
+QC pass counts:
+
+| Pair type | zh_slim_0004 | en_slim_0004 | Note |
+|---|---:|---:|---|
+| I | 10,000 -> 6,866 | 10,000 -> 4,794 | SeedVC generated all requested rows; no missing result/audio in the validation run |
+| J_fast | 7,375 -> 2,032 | 7,482 -> 1,910 | Low speed-direction pass rate, about 31%; main failure is `speed_direction_fail` |
+| J_slow | 7,375 -> 6,358 | 7,482 -> 5,780 | Stable; speed-direction pass rate is about 95% zh / 94% en |
+
+Operational conclusion: `I` and `J_slow` are usable after QC; `J_fast` is integrated but lower-yield and should be tuned if high retained volume is required.
+
 ---
 
 ## 6. Configuration
@@ -199,15 +233,16 @@ Key knob categories:
 | `h2.ref_neutral_min / h2.p_neutral_min / h2.target_more_neutral_margin` | H2's ref/tgt neutral floors and the minimum "target more neutral" margin |
 | `dnsmos_bak_filter.apply` | toggle the optional anti-electronic-tone post-filter |
 
-## 6.1 Experimental prosody routes
+## 6.1 I/J prosody routes
 
-This repo now also carries two additional pair-generation routes under `scripts/` and `configs/prosody_routes.yaml`. They are additive and do not change the default `run_pairs_local.sh` mainline.
+This repo carries two additional pair-generation routes under `scripts/` and `configs/prosody_routes.yaml`. They are additive to the regular A-H/Genre pipeline and are now part of the Qizhi batch flow by default.
 
 - `J_fast` / `J_slow`: `01_prepare_step_speed_jobs.py -> run_step_editx_local.py -> 02_collect_step_speed_pairs.py -> 03_add_prosody_metrics.py`, with launchers `run_speed_pipeline.sh` and `run_zh_en_slim500_speed.sh`.
 - `I` (SeedVC prosody transfer): `07_prepare_prosody_no_timbre_seedvc_jobs.py -> 08_run_seedvc_jobs.py -> 09_collect_seedvc_prosody_no_timbre_pairs.py -> 03_add_prosody_metrics.py`, with launcher `run_seedvc_prosody_no_timbre_slim500.sh`.
-- `run_run03_prosody_speed_pairs.sh` can write these optional types into the normal split `pairs/` layout. When QC is enabled, `04c_add_pair_audio_metrics.py` first evaluates missing generated-audio emotion/SenseVoice/DNSMOS metrics and merges them into `emotion/per_file_dual.csv`.
-- In the Qizhi batch submitter/runner, `RUN_IJ_ON_QZ` now defaults to `1`, so I/J are included by default after the regular pair/QC stage. Set `RUN_IJ_ON_QZ=0` only when you intentionally want to skip them.
-- Supporting docs live in [docs/prosody_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_routes.md) and [docs/prosody_no_timbre_model_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_no_timbre_model_routes.md).
+- `run_run03_prosody_speed_pairs.sh` writes `I.jsonl`, `J_fast.jsonl`, and `J_slow.jsonl` into the normal split `pairs/` layout, then optionally refreshes generated-audio metrics, WavLM speaker similarity, and QC.
+- When QC is enabled, `04c_add_pair_audio_metrics.py` first evaluates missing generated-audio emotion/SenseVoice/DNSMOS metrics and merges them into `emotion/per_file_dual.csv`.
+- In the Qizhi batch submitter/runner, `RUN_IJ_ON_QZ` defaults to `1`, so I/J are included by default after the regular pair/QC stage. Set `RUN_IJ_ON_QZ=0` only when you intentionally want to skip them.
+- Local-only supporting docs live under `docs/prosody_routes.md` and `docs/prosody_no_timbre_model_routes.md`; those `docs/` files are not part of the GitHub sync.
 - The old DSP-based prosody-no-timbre prototype is intentionally not synced into this repo.
 
 ## 6.2 B1 local edit (M1 spike)
@@ -236,7 +271,7 @@ Every pair jsonl line:
 ```json
 {
   "pair_id": "split_0000:B:000123",
-  "pair_type": "B | C | C-mixed | D | D-st | D_cross_emo | Genre | H1 | H2 | H3 | A",
+  "pair_type": "A | B | C | C-mixed | D | D-st | D_cross_emo | Genre | Genre_conv | H1 | H2 | H3 | I | J_fast | J_slow",
   "reference_audio": "/path/to/ref.wav",
   "reference_text": "...",
   "target_audio": "/path/to/tgt.wav",
@@ -261,6 +296,11 @@ QC outputs use side-prefixed metrics such as `ref_top1`/`tgt_top1`
 `tgt_dnsmos_ovrl`, `ref_dnsmos_sig`, `tgt_dnsmos_sig`, `ref_dnsmos_bak`,
 and `tgt_dnsmos_bak`.
 
+I/J rows add prosody-specific fields:
+
+- `I`: `prosody_ref_audio`, `prosody_ref_text`, `timbre_ref_audio`, `timbre_ref_text`, and `timbre_ref_vs_tgt_speaker_sim_wavlm`. `reference_audio` / `reference_text` are aliases for the prosody reference to stay compatible with shared QC code.
+- `J_fast` / `J_slow`: `prosody_metrics.duration_ratio_tgt_over_ref`, `prosody_metrics.speed_direction_pass`, and the same `ref_vs_tgt_speaker_sim_wavlm` field as the regular pair types.
+
 ---
 
 ## 8. Project structure
@@ -284,14 +324,21 @@ pair_construction/
 │   ├── 07c_construct_D.py
 │   ├── 07d_construct_D_st.py
 │   ├── 07e_construct_genre.py
+│   ├── 07e_construct_genre_conv.py
 │   ├── 07f_construct_D_cross_emo.py
+│   ├── 07_prepare_prosody_no_timbre_seedvc_jobs.py
+│   ├── 08_run_seedvc_jobs.py
+│   ├── 09_collect_seedvc_prosody_no_timbre_pairs.py
+│   ├── 01_prepare_step_speed_jobs.py
+│   ├── 02_collect_step_speed_pairs.py
+│   ├── 03_add_prosody_metrics.py
 │   ├── 08_construct_H1.py
 │   ├── 09_construct_H2.py
 │   ├── 10_construct_H3.py
 │   ├── 11b_add_wavlm_sim.py
 │   ├── 12_filter_dnsmos_bak.py
 │   ├── _utils.py / _emotion_lookup.py / _dnsmos.py
-│   └── quality_check.py / compare_edit_modes.py
+│   └── qc_pairs.py / quality_check.py / compare_edit_modes.py
 ├── runs/                       # production wrappers
 │   ├── run_zh_full.sh          # zh full: stage1 + editx + pair
 │   ├── run_zh_from_vcdata.sh   # zh skip stage1, start from editx

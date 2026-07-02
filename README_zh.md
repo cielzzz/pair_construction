@@ -2,7 +2,7 @@
 
 # pair_construction
 
-> **只读上游、产出 pair** 的流水线 —— 把音色克隆 + 语音编辑两条上游输出，转成 11 类 `(参考音频, 指令, 目标音频)` 训练对，用于指令条件 TTS 训练。
+> **只读上游、产出 pair** 的流水线 —— 把音色克隆 + 语音编辑两条上游输出，转成 12 个主线类别 + I/J 韵律类别的 `(参考音频, 指令, 目标音频)` 训练对，用于指令条件 TTS 训练。
 
 本项目**不训练模型**、**不生成新音频**、**不改上游产物**。只做：读 → 标准化 → 关联 → 过滤 → 输出 jsonl。
 
@@ -17,11 +17,11 @@
 - **`vcdata_construction/`**：MOSS-TTS 克隆参考说话人，生成同音色 + 不同文本的合成 ref_audio。
 - **`vc_edit/`**：StepFun EditX 把参考音频做风格 / 情绪编辑，得到同音色 + 不同表现的 edited_audio。
 
-本仓库把两路打通，挂上情绪打分，输出 11 类 pair，覆盖：中性化、加情绪、风格转换、跨情绪转换、零变化对照、跨 speaker 负样本 —— 全部带自然语言指令。
+本仓库把两路打通，挂上情绪打分，支持 15 个 pair 输出名，覆盖：中性化、加情绪、风格转换、跨情绪转换、零变化对照、跨 speaker 负样本、韵律迁移和语速控制 —— 全部带自然语言指令。
 
 ---
 
-## 2. 11 类 pair 定义
+## 2. Pair 类别定义
 
 | 类型 | reference | target | 编辑来源 | 用途 |
 |---|---|---|---|---|
@@ -33,11 +33,17 @@
 | **D_st** | ref_audio（有表现力） | edited_audio（有表现力） | 同 D，同文本 | 同情绪、同文本（EditX 旁路子集） |
 | **D_cross_emo** | ref_audio（vcdata，情绪 X） | original_audio（真人，情绪 Y） | 不用 editx（仅 vcdata） | 跨情绪转换 —— 同 speaker（clone vs 真人）、跨情绪类别 |
 | **Genre** | ref_audio | edited_audio（风格转换） | zh: `[news, chat]` / en: `[news, radio]` | 风格 / 播报方式转换，同文本 |
+| **Genre_conv** | edited_audio（风格 A） | edited_audio（风格 B） | 成对的 EditX 风格 tag | 风格 A -> 风格 B 转换，同 speaker、同文本 |
 | **H1** | original_audio | ref_audio | A 的 emotion cosine 极高子集 | 零变化对照（"保持原样"） |
 | **H2** | ref_audio（已较中性） | edited_audio（更中性） | 中性化 tag | 中性 -> 更中性对照 |
 | **H3** | 任一 A 的 ref | 跨行随机 ref | A 跨行重组 | 跨 speaker 负样本 |
+| **I** | prosody_ref_audio（同时作为 reference_audio 别名） | 使用 timbre_ref_audio 音色的 SeedVC 输出 | SeedVC 韵律迁移 | 保留 prosody reference 的语速、停顿、节奏、重音和语调，同时使用 timbre reference 的说话人音色 |
+| **J_fast** | 原始 / 参考音频 | Step-Audio-EditX 语速编辑输出 | `speed_faster` / `speed_more_faster` | 同 speaker、同文本，语速更快 |
+| **J_slow** | 原始 / 参考音频 | Step-Audio-EditX 语速编辑输出 | `speed_slower` / `speed_more_slower` | 同 speaker、同文本，语速更慢 |
 
 **中性化 tag 因语言而异**：中文用 `style_radio`（中性化效果最强），英文用 `style_chat`（英文模型上最强）。Genre 的白名单是补集 —— B/C/H2（需要中性化）和 Genre（不能从已中性出发）永远不会共享 tag。
+
+`I`、`J_fast`、`J_slow` 是 I/J 韵律类别。它们由 `scripts/run_run03_prosody_speed_pairs.sh` 在常规 pair/QC 阶段之后生成，复用同一套打分和 QC 基础设施，并且在启智 runner 中通过 `RUN_IJ_ON_QZ=1` 默认开启。
 
 ---
 
@@ -72,7 +78,7 @@
   08 H1     09 H2     10 H3     07e Genre / Genre_conv
                            │
                            ▼
-            11b add_wavlm_sim   （对全部 12 类 pair 做 WavLM-L + ECAPA-TDNN 重打分，写入 pairs/scored/*.jsonl）
+            11b add_wavlm_sim   （对支持的 pair 类型做 WavLM-L + ECAPA-TDNN 重打分，写入 pairs/scored/*.jsonl）
                            │
                            ▼
             12 filter_dnsmos_bak （可选电音过滤）
@@ -82,6 +88,15 @@
                            │
                            ▼
                   outputs/<split>/pairs/*.jsonl
+```
+
+启用时，I/J 分支在常规 pair 阶段之后继续运行：
+
+```
+source manifest
+   ├── J_fast / J_slow: 准备 Step-Audio-EditX 语速任务 -> 收集语速 pair -> 加 prosody metrics
+   └── I: 准备 SeedVC 韵律迁移任务 -> 跑 SeedVC -> 收集 I pair -> 加 prosody metrics
+        -> 补生成音频指标 -> 加 WavLM speaker similarity -> qc_pairs
 ```
 
 ---
@@ -135,6 +150,7 @@ $EMOPY scripts/03_join_editx_with_vcdata.py --split $SPLIT
 bash   scripts/04_run_emotion_eval.sh $SPLIT cuda:0
 for s in 05_construct_A 06_construct_B 07_construct_C 07b_construct_C_mixed \
          07c_construct_D 07d_construct_D_st 07e_construct_genre 07f_construct_D_cross_emo \
+         07e_construct_genre_conv \
          08_construct_H1 09_construct_H2 10_construct_H3; do
     $EMOPY scripts/${s}.py --split $SPLIT
 done
@@ -172,6 +188,24 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 
 以上是最终 QC 之前的原始 pair 行数。最终通过 / 拒绝统计见 `outputs/<split>/quality_gate/summary.json`。
 
+### 5.4 已验证的 I/J 结果
+
+最近一次完成的 I/J 验证 run：
+
+```text
+outputs/mtd_pass_nonmulti_primary_le_0p3_zh0004_en0004_ij_qz_20260621_run01
+```
+
+QC 通过数：
+
+| Pair type | zh_slim_0004 | en_slim_0004 | 备注 |
+|---|---:|---:|---|
+| I | 10,000 -> 6,866 | 10,000 -> 4,794 | SeedVC 生成了全部请求行；该验证 run 中无缺失结果 / 音频 |
+| J_fast | 7,375 -> 2,032 | 7,482 -> 1,910 | 语速方向通过率较低，约 31%；主要失败原因是 `speed_direction_fail` |
+| J_slow | 7,375 -> 6,358 | 7,482 -> 5,780 | 稳定；语速方向通过率约 zh 95% / en 94% |
+
+操作结论：`I` 和 `J_slow` 经过 QC 后可用；`J_fast` 已接入但留存率较低，如果需要高产出量，需要继续调 Step-Audio-EditX 语速 prompt / 生成策略或方向阈值。
+
 ---
 
 ## 6. 配置
@@ -197,15 +231,16 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 | `h2.ref_neutral_min / h2.p_neutral_min / h2.target_more_neutral_margin` | H2 的 ref/tgt 中性阈值，以及“target 更中性”最小 margin |
 | `dnsmos_bak_filter.apply` | 是否打开可选的反电音过滤 |
 
-## 6.1 实验性 prosody 路线
+## 6.1 I/J 韵律路线
 
-本仓库现在额外带了两条新的 pair 生成路线，入口在 `scripts/` 和 `configs/prosody_routes.yaml`。它们是增量接入，不会改动默认 `run_pairs_local.sh` 主链路。
+本仓库额外带了两条 pair 生成路线，入口在 `scripts/` 和 `configs/prosody_routes.yaml`。它们增量接入常规 A-H/Genre 流水线，并且现在默认纳入启智批量流程。
 
 - `J_fast` / `J_slow`：`01_prepare_step_speed_jobs.py -> run_step_editx_local.py -> 02_collect_step_speed_pairs.py -> 03_add_prosody_metrics.py`，启动脚本是 `run_speed_pipeline.sh` 和 `run_zh_en_slim500_speed.sh`。
 - `I` (SeedVC prosody transfer)：`07_prepare_prosody_no_timbre_seedvc_jobs.py -> 08_run_seedvc_jobs.py -> 09_collect_seedvc_prosody_no_timbre_pairs.py -> 03_add_prosody_metrics.py`，启动脚本是 `run_seedvc_prosody_no_timbre_slim500.sh`。
-- `run_run03_prosody_speed_pairs.sh` 可以把这些可选类别写入标准 split 的 `pairs/` 目录。开启 QC 时，会先运行 `04c_add_pair_audio_metrics.py`，补评新生成音频缺失的 emotion/SenseVoice/DNSMOS 指标并合并回 `emotion/per_file_dual.csv`。
-- 启智批量提交/runner 中，`RUN_IJ_ON_QZ` 现在默认是 `1`，因此常规 pair/QC 之后会默认继续跑 I/J。只有明确要跳过 I/J 时才传 `RUN_IJ_ON_QZ=0`。
-- 配套说明文档在 [docs/prosody_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_routes.md) 和 [docs/prosody_no_timbre_model_routes.md](/inspire/qb-ilm2/project/embodied-multimodality/public/xyzhang/projects/pair_construction/docs/prosody_no_timbre_model_routes.md)。
+- `run_run03_prosody_speed_pairs.sh` 会把 `I.jsonl`、`J_fast.jsonl`、`J_slow.jsonl` 写入标准 split 的 `pairs/` 目录，然后按需刷新生成音频指标、WavLM speaker similarity 和 QC。
+- 开启 QC 时，会先运行 `04c_add_pair_audio_metrics.py`，补评新生成音频缺失的 emotion/SenseVoice/DNSMOS 指标并合并回 `emotion/per_file_dual.csv`。
+- 启智批量提交/runner 中，`RUN_IJ_ON_QZ` 默认是 `1`，因此常规 pair/QC 之后会默认继续跑 I/J。只有明确要跳过 I/J 时才传 `RUN_IJ_ON_QZ=0`。
+- 本地配套说明文档在 `docs/prosody_routes.md` 和 `docs/prosody_no_timbre_model_routes.md`；这些 `docs/` 文件不参与 GitHub 同步。
 - 旧的 DSP 版 prosody-no-timbre 原型这次不再同步到本仓库。
 
 ---
@@ -217,7 +252,7 @@ RUN_MODE=after_editx sh runs/run_zh_from_vcdata.sh
 ```json
 {
   "pair_id": "split_0000:B:000123",
-  "pair_type": "B | C | C-mixed | D | D-st | D_cross_emo | Genre | H1 | H2 | H3 | A",
+  "pair_type": "A | B | C | C-mixed | D | D-st | D_cross_emo | Genre | Genre_conv | H1 | H2 | H3 | I | J_fast | J_slow",
   "reference_audio": "/path/to/ref.wav",
   "reference_text": "...",
   "target_audio": "/path/to/tgt.wav",
@@ -242,6 +277,11 @@ QC 输出使用带 ref/tgt 前缀的标准指标字段，例如 `ref_top1`/`tgt_
 `tgt_dnsmos_ovrl`、`ref_dnsmos_sig`、`tgt_dnsmos_sig`、`ref_dnsmos_bak`、
 `tgt_dnsmos_bak`。
 
+I/J 行会额外带韵律相关字段：
+
+- `I`：`prosody_ref_audio`、`prosody_ref_text`、`timbre_ref_audio`、`timbre_ref_text`、`timbre_ref_vs_tgt_speaker_sim_wavlm`。其中 `reference_audio` / `reference_text` 是 prosody reference 的别名，用于兼容共享 QC 代码。
+- `J_fast` / `J_slow`：`prosody_metrics.duration_ratio_tgt_over_ref`、`prosody_metrics.speed_direction_pass`，以及和常规类别相同的 `ref_vs_tgt_speaker_sim_wavlm`。
+
 ---
 
 ## 8. 目录结构
@@ -265,14 +305,21 @@ pair_construction/
 │   ├── 07c_construct_D.py
 │   ├── 07d_construct_D_st.py
 │   ├── 07e_construct_genre.py
+│   ├── 07e_construct_genre_conv.py
 │   ├── 07f_construct_D_cross_emo.py
+│   ├── 07_prepare_prosody_no_timbre_seedvc_jobs.py
+│   ├── 08_run_seedvc_jobs.py
+│   ├── 09_collect_seedvc_prosody_no_timbre_pairs.py
+│   ├── 01_prepare_step_speed_jobs.py
+│   ├── 02_collect_step_speed_pairs.py
+│   ├── 03_add_prosody_metrics.py
 │   ├── 08_construct_H1.py
 │   ├── 09_construct_H2.py
 │   ├── 10_construct_H3.py
 │   ├── 11b_add_wavlm_sim.py
 │   ├── 12_filter_dnsmos_bak.py
 │   ├── _utils.py / _emotion_lookup.py / _dnsmos.py
-│   └── quality_check.py / compare_edit_modes.py
+│   └── qc_pairs.py / quality_check.py / compare_edit_modes.py
 ├── runs/                       # 生产 wrapper
 │   ├── run_zh_full.sh          # 中文全跑：stage1 + editx + pair
 │   ├── run_zh_from_vcdata.sh   # 跳 stage1，从 editx 起跑
