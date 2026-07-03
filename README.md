@@ -206,7 +206,7 @@ QC pass counts:
 | J_fast | 7,375 -> 2,032 | 7,482 -> 1,910 | Low speed-direction pass rate, about 31%; main failure is `speed_direction_fail` |
 | J_slow | 7,375 -> 6,358 | 7,482 -> 5,780 | Stable; speed-direction pass rate is about 95% zh / 94% en |
 
-Operational conclusion: `I` and `J_slow` are usable after QC; `J_fast` is integrated but lower-yield and should be tuned if high retained volume is required.
+Operational note: `I` and `J_slow` are usable after QC; `J_fast` is integrated but lower-yield and should be tuned if high retained volume is required.
 
 ---
 
